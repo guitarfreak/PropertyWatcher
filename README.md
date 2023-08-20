@@ -12,10 +12,13 @@ Can be usefull if you quickly want to check some data and you don't want to spen
 
 Also works in development builds.
 
+### How to use
+
+Copy **PropertyWatcher.h** and **PropertyWatcher.cpp** into your project source folder.
 See **PropertyWatcher.h** for some **example usage code**.
 
 Needs [**ImGui**](https://github.com/ocornut/imgui) to work, check Github for an Unreal ImGui backend plugin. \
-For example there is [this](https://github.com/segross/UnrealImGui) or [this](https://github.com/benui-dev/UnrealImGui).
+For example, there is [this](https://github.com/segross/UnrealImGui) or [this](https://github.com/benui-dev/UnrealImGui).
 
 ### Features:
  - Manipulate primitive variables via ImGui widgets.
@@ -30,9 +33,9 @@ For example there is [this](https://github.com/segross/UnrealImGui) or [this](ht
  - Show actor component and widget hierarchy.
  - Custom draw functions for items.
  - Detachable tabs / multiple watch windows. (ImGui viewports?)
- - Copy/paste full subgraph via json serialisation.
+ - Copy/paste full subgraph via json serialization.
  - Call functions via node connections.
- - Memory snapshot.
+ - Memory snapshots.
  - More variable manipulation, e.g.: add/remove/rearrange items in arrays.
 
 ### Gallery
