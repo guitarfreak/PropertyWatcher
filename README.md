@@ -40,10 +40,12 @@ For example, there is [this](https://github.com/segross/UnrealImGui) or [this](h
 
 ### Gallery
 
+(Color theme is a modified version of **Blender Dark [Improvised]** from [ImguiCandy](https://github.com/Raais/ImguiCandy))
+
 | Handled types overview | Filtered search | Array inline          |
 |--|--|--|
-| ![](./Screenshots/types.png)         | ![](./Screenshots/search.png) | ![](./Screenshots/array_inline.png) |
+| ![](./Screenshots/types.png?raw=true)         | ![](./Screenshots/search.png?raw=true) | ![](./Screenshots/array_inline.png?raw=true) |
 
 | Actor search           | Watch window    | Inlining              |
 |--|--|--|
-| ![](./Screenshots/actorSearch.png)   | ![](./Screenshots/watch.png)  | ![](./Screenshots/inlining.png)     |
+| ![](./Screenshots/actorSearch.png?raw=true)   | ![](./Screenshots/watch.png?raw=true)  | ![](./Screenshots/inlining.png?raw=true)     |
