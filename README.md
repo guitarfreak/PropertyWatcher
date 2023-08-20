@@ -12,7 +12,9 @@ Can be usefull if you quickly want to check some data and you don't want to spen
 
 Also works in development builds.
 
-Needs [**ImGui**](https://github.com/ocornut/imgui) to work, check Github for an Unreal ImGui plugin. \
+See **PropertyWatcher.h** for some **example usage code**.
+
+Needs [**ImGui**](https://github.com/ocornut/imgui) to work, check Github for an Unreal ImGui backend plugin. \
 For example there is [this](https://github.com/segross/UnrealImGui) or [this](https://github.com/benui-dev/UnrealImGui).
 
 ### Features:
