@@ -143,13 +143,15 @@
 #include "Misc/ExpressionParser.h"
 #include "Internationalization/Regex.h"
 
-using namespace PropertyWatcher;
+//using namespace PropertyWatcher;
 
 #if WITH_EDITORONLY_DATA
 #define MetaData_Available true
 #else 
 #define MetaData_Available false
 #endif
+
+namespace PropertyWatcher {
 
 void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TArray<MemberPath>& WatchedMembers, UWorld* World, bool* IsOpen, bool* WantsToSave, bool* WantsToLoad) {
 	*WantsToSave = false;
@@ -2220,5 +2222,6 @@ const char* PropertyWatcher::HelpText =
 	"Right click on an item to inline it.\n"
 	;
 
+}
 
 #endif
