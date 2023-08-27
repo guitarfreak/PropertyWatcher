@@ -1,7 +1,7 @@
 # Property Watcher
 A **runtime variable watch window** for **Unreal Engine** using **ImGui**.
 
-![Image](./Screenshots/demonstration.gif)
+![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/2d26cc5b-a054-4200-ac5c-80d698e44d73)
 
 ### Info
 
@@ -44,8 +44,8 @@ For example, there is [this](https://github.com/segross/UnrealImGui) or [this](h
 
 | Handled types overview | Filtered search | Array inline          |
 |--|--|--|
-| ![](./Screenshots/types.png?raw=true)         | ![](./Screenshots/search.png?raw=true) | ![](./Screenshots/array_inline.png?raw=true) |
+| ![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/4501e1ec-4403-4af0-8d55-d361f5db7138?raw=true)         | ![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/a34b5a53-1ca5-4071-81e6-1b2bf836259e?raw=true) | ![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/8b4c138b-5cdd-4fb2-96bb-a264bf91ab2e?raw=true) |
 
 | Actor search           | Watch window    | Inlining              |
 |--|--|--|
-| ![](./Screenshots/actorSearch.png?raw=true)   | ![](./Screenshots/watch.png?raw=true)  | ![](./Screenshots/inlining.png?raw=true)     |
+| ![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/6f999ec7-313f-46c4-b8f4-47112cb98ea6?raw=true)   | ![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/2b03239c-f587-4912-8ab5-99ca1aa0680c?raw=true)  | ![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/791b9c37-6445-4470-89ed-fe2e5704dd4b?raw=true)     |
