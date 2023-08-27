@@ -1,7 +1,7 @@
 # Property Watcher
 A **runtime variable watch window** for **Unreal Engine** using **ImGui**.
 
-![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/2d26cc5b-a054-4200-ac5c-80d698e44d73)
+![](https://github.com/guitarfreak/PropertyWatcher/assets/1862206/2d26cc5b-a054-4200-ac5c-80d698e44d73.gif)
 
 ### Info
 
