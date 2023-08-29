@@ -8,7 +8,7 @@ A **runtime variable watch window** for **Unreal Engine** using **ImGui**.
 Uses the Unreal Engine metadata system to display class variables/functions like a debugger watch window.
 You need to give it some initial objects/structs like gamestate/playercontroller/level and then you can branch out from there.
 
-Can be usefull if you quickly want to check some data and you don't want to spend the time to write printfs or create other widgets to display information.
+Can be useful if you quickly want to check some data and you don't want to spend the time to write printfs or create other widgets to display information.
 
 Also works in development builds.
 
