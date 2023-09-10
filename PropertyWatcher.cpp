@@ -1,4 +1,6 @@
-/*
+/* 
+	Development notes:
+
 	Info:
 		https://forums.unrealengine.com/t/a-sample-for-calling-a-ufunction-with-reflection/276416/9
 		https://ikrima.dev/ue4guide/engine-programming/uobject-reflection/uobject-reflection/
@@ -9,118 +11,92 @@
 		https://github.com/ocornut/imgui/issues/718
 		https://forums.unrealengine.com/t/using-clang-to-compile-on-windows/17478/51
 
-	Not Important:
-		- handle right clip copy and paste
-		- export import everything with json
-			try to use unreal serialization functions in properties.
-		- favourites can be selected and deleted with del
-		- selection happens on first cell background?
-		- Sorting
-		- make tool for stepping timesteps, pause, continue, maybe speed up gamespeed
-		- idea: could filter everything if we do a complete full pre pass by asking all children if they have the searched item
-		- Better line trace.
-		- make save and restore functions for window settings
-		- super bonus: hide things that have changed from base object like in details viewer in unreal
-		- ability to modify contains like array and map, add/remove/insert and so on
-		- look at EFieldIterationFlags
-		- Metadata: use keys: Category, UIMin, UIMax
-			maybe: tooltip, sliderexponent?
-		- add ability to categorise any table column, right now we hardcoded class categories,
-			but could make it dynamic and then use metadata categories
-		- metadata categories, Property->MetaDataMap
-		- add hot keys for enabling filter, classes, functions
-		- call functions in watchItemPaths like Manager.SubObject.CallFunc:GetCurrentThing.Member
-		- Make it easier to add unique struct handlings, make it so code is not so spread out.
-
-		- unreal engine clang compile test
-
-	Easy to implement:
-		- add ctrl+shift+alt + numbers for menu navigation
-		- ctrl+123 to switch between tabs
-
-		- make value was updated animations
-		- make background transparent mode, overlay style
-		- if search input already focused, ctrl+f should select everything
-
-	Things to handle:
-		- WorldOutline, Actor components, widget tree
-
-	Problems:
-		- classes left navigation doesnt work
-		- blueprint functions have wrong parameters in property cpp type
-		- Delegates don't get inlined?
-
-	global settings to change float text input to sliders, and also global settings for drag change speed
-	crash on weakpointerget when bp selected camera search for private and disable classes
-
-	***
-
-	- print container preview up to property value region size, the more you open the column the more you see
-	- Fix blueprint struct members that have _C_0 and so on
-	- make mode that diffs current values of object with default class variables.
-
-	- compare categories from widgets and actors and see how they are composed
-
-	- for call functions dynamically we could use all our widgets for input and then store the result in a input
-		we could then display it with drawItem, all the information is in the properties of the function, including the result property
-
-	- draw widget tree
-
-	- add option to auto push nodes on left side so you can see more and the padding isnt so big on big trees
-	- clamp property name text to right and clip left so right side
-		of text is always visible, which is more important
-
-	- Button to clear custom storage like inlining
-	- handle UberGaphFrame functions
-	- Class pointer members maybe do default object.
-
-	- column texts as value or string to distinguish between text and value filtering.
-
-	***
-
-	Todo before release:
-		- search should be able to do structvar.membervar = 5
-		- better search: maybe make a mode "hide non value types" that hides a list of things like delegates that you never want to see
-			  maybe 2 search boxes, second for permanent stuff like hiding delegates, first one for quick searches.
-
-		- search jump to next result
-		- detached watch windows
-		- custom draw functions for data
-			- add right click "draw as" (rect, whatever)
-			- manipulator widget based on data like position, show in world
-		- simple function calling
-			Make functions expandable in tree form, and leafs are arguments and return value
-		- simple delegate calling
-		- fix maps with touples
-		- auto complete for watch window members
-		- property path by member value
-			- make path with custom getter-> instead of array index look at object and test for name or something
-			- make custom path by dragging from a value, that should make link to parent node with that value being looked for
-
-		- try imgui viewports
-
-	***
-
-	Server comm widget console explorer thing:
-		- client ask server what vars there are, server answers.
-		- if text box empty all names are listed
-		- double click, when server answers list things
-
-	imgui on server?
-	maybe server could give answer for vars as json string
-		like you ask him for stuff and he gets the var/struct and returns the thing as string
-
-	maybe explorer for member vars
-	Another idea: Make server send snapshot of object that you want to look at, server serializes it and client stores it
-
-	allow overscroll in tables, so we dont jump up when we clamp
-
-	make memory snapshot
-
 	Bugs:
+		- Classes left navigation doesnt work.
+		- Blueprint functions have wrong parameters in property cpp type.
+		- Delegates don't get inlined?
+		- Crash on WeakPointerGet when bp selected camera search for private and disable classes.
+
 		- Error when inlining this PlayerController.AcknowledgedPawn.PlayerState.PawnPrivate.Controller.PlayerInput.DebugExecBindings in watch tab
 			and setting inline stack to 2
 			Structs don't inline correctly in watch window as first item.
+		- '/' can't be searched
+		- Actor list should clear on restart because pointers will be invalid. Should stop using statics.
+
+	ToDo:
+		- Global settings to change float text input to sliders, and also global settings for drag change speed.
+		- Fix blueprint struct members that have _C_0 and so on.
+		- Button to clear custom storage like inlining.
+		- Handle UberGaphFrame functions.
+		- Column texts as value or string to distinguish between text and value filtering.
+		- WorldOutline, Actor components, Widget tree.
+		- Set favourites on variables, stored via classes/struct types, stored temporarily, should load.
+			Should be put on top of list, maybe as "favourites" node.
+		- Check performance.
+		- Show the column keywords somewhere else and not in the helper popup.
+
+		Easy to implement:
+			- Ctrl + 123 to switch between tabs.
+			- Make value was updated animations.
+			- Make background transparent mode, overlay style.
+			- If search input already focused, ctrl+f should select everything.
+
+		Not Important:
+			- Handle right clip copy and paste.
+			- Export/import everything with json. (Try to use unreal serialization functions in properties.)
+			- Watch items can be selected and deleted with del.
+			- Selection happens on first cell background?
+			- Sorting.
+			- Better actors line trace.
+			- Make save and restore functions for window settings.
+			- Super bonus: Hide things that have changed from base object like in details viewer UE.
+			- Ability to modify containers like array and map, add/remove/insert.
+			- Look at EFieldIterationFlags
+			- Metadata: Use keys: Category, UIMin, UIMax. (Maybe: tooltip, sliderexponent?)
+			- Metadata categories: Property->MetaDataMap.
+			- Add hot keys for enabling filter, classes, functions.
+			- Call functions in watchItemPaths like Manager.SubObject.CallFunc:GetCurrentThing.Member.
+			- Make it easier to add unique struct handlings from user side.
+			- Do a clang compile test.
+
+		Add before release:
+			- Search should be able to do structvar.membervar = 5.
+			- Better search: maybe make a mode "hide non value types" that hides a list of things like delegates that you never want to see.
+				  Maybe 2 search boxes, second for permanent stuff like hiding delegates, first one for quick searches.
+
+			- Search jump to next result.
+			- Detached watch windows.
+			- Custom draw functions for data.
+				- Add right click "draw as" (rect, whatever).
+				- Manipulator widget based on data like position, show in world.
+			- Simple function calling.
+				Make functions expandable in tree form, and leafs are arguments and return value.
+			- Simple delegate calling.
+			- Fix maps with touples.
+			- Auto complete for watch window members.
+			- Property path by member value.
+				- Make path with custom getter-> instead of array index look at object and test for name or something.
+				- Make custom path by dragging from a value, that should make link to parent node with that value being looked for.
+
+			- Try imgui viewports.
+
+	Ideas:
+		- Print container preview up to property value region size, the more you open the column the more you see.
+		- Make mode that diffs current values of object with default class variables.
+		- To call functions dynamically we could use all our widgets for input and then store the result in an input.
+			We could then display it with drawItem, all the information is in the properties of the function, including the result property.
+		- Add mode to clamp property name text to right side and clip left so right side of text is always visible, which is more important.
+		- Class pointer members maybe do default object.
+		- Ability to make memory snapshot.
+
+	Session:
+		- Actor component tree.
+		- Widget component tree.
+		- Favourites.
+		- Fix inline bug.
+		- Variable/function categories.
+		- Remember opened tree nodes between restarts.
+		- Add filter mode that hides everything.
 */
 
 #if !UE_SERVER
@@ -143,8 +119,6 @@
 #include "Misc/ExpressionParser.h"
 #include "Internationalization/Regex.h"
 
-//using namespace PropertyWatcher;
-
 #if WITH_EDITORONLY_DATA
 #define MetaData_Available true
 #else 
@@ -153,21 +127,20 @@
 
 namespace PropertyWatcher {
 
+void ObjectsTab(bool DrawControls, TArray<PropertyItemCategory>& CategoryItems, TreeState* State = 0);
+void ActorsTab(bool DrawControls, UWorld* World, TreeState* State = 0, ColumnInfos* ColInfos = 0);
+void WatchTab(bool DrawControls, TArray<MemberPath>&WatchedMembers, bool* WantsToSave, bool* WantsToLoad, TArray<PropertyItemCategory>&CategoryItems, TreeState * State = 0);
+
 void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TArray<MemberPath>& WatchedMembers, UWorld* World, bool* IsOpen, bool* WantsToSave, bool* WantsToLoad) {
 	*WantsToSave = false;
 	*WantsToLoad = false;
-	
-	// For convenience
-	TArray<PropertyItem> Items;
-	for (auto& It : CategoryItems)
-		Items.Append(It.Items);
 
 	ImGui::SetNextWindowSize(ImVec2(430, 450), ImGuiCond_FirstUseEver);
-
 	if (!ImGui::Begin(Ansi(*("Property Watcher: " + WindowName)), IsOpen, ImGuiWindowFlags_MenuBar)) { ImGui::End(); return; }
 
 	static ImVec2 FramePadding = ImVec2(ImGui::GetStyle().FramePadding.x, 2);
 
+	// Menu.
 	if (ImGui::BeginMenuBar()) {
 		defer{ ImGui::EndMenuBar(); };
 		if (ImGui::BeginMenu("Settings")) {
@@ -182,6 +155,22 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 			defer{ ImGui::EndMenu(); };
 			ImGui::Text(HelpText);
 		}
+	}
+
+	ColumnInfos ColInfos = {};
+	{
+		int FlagNoSort = ImGuiTableColumnFlags_NoSort;
+		int FlagDefault = ImGuiTableColumnFlags_WidthStretch;
+		ColInfos.Infos.Add({ "name",     "Property Name",  FlagDefault | ImGuiTableColumnFlags_NoHide });
+		ColInfos.Infos.Add({ "value",    "Property Value", FlagDefault | FlagNoSort });
+		ColInfos.Infos.Add({ "metadata", "Metadata",       FlagNoSort | ImGuiTableColumnFlags_DefaultHide | ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("(?)").x });
+		ColInfos.Infos.Add({ "type",     "Property Type",  FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ "cpptype",  "CPP Type",       FlagDefault });
+		ColInfos.Infos.Add({ "class",    "Owner Class",    FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ "category", "Category",       FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ "address",  "Adress",         FlagDefault | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ "size",     "Size",           FlagDefault | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ "",         "Remove",         ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() });
 	}
 
 	// Top region.
@@ -205,7 +194,11 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 		ImGui::TextDisabled("(?)");
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
 			ImGui::BeginTooltip(); defer{ ImGui::EndTooltip(); };
-			ImGui::Text(SearchBoxHelpText);
+
+			FString Text = SearchBoxHelpText;
+			Text.Append("\nCurrent keywords for columns are: \n\t");
+			Text.Append(FString::Join(ColInfos.GetSearchNameArray(), *FString(", ")));
+			ImGui::Text(Ansi(*Text));
 		}
 		ImGui::SameLine();
 		ImGui::Checkbox("Filter", &SearchFilterActive);
@@ -218,27 +211,11 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 		ImGuiAddon::QuickTooltip("Show functions in actor items.");
 		ImGui::Spacing();
 
-		static TArray<FString> ColumnNames = { "name", "value", "metadata", "type", "cpptype", "class", "category", "address", "size" };
-		SearchParser.ParseExpression(SearchString, ColumnNames);
-
-		// Debug show commands
-		if (false)
-		{
-			int i = -1;
-			for (auto It : SearchParser.Commands) {
-				i++;
-				if (i > 0) {
-					ImGui::SameLine();
-					ImGui::Text(",");
-					ImGui::SameLine();
-				}
-				ImGui::Text(Ansi(*It.ToString()));
-			}
-		}
+		SearchParser.ParseExpression(SearchString, ColInfos.GetSearchNameArray());
 	}
 
-	if (ImGui::BeginTabBar("MyTabBar", ImGuiTabBarFlags_None))
-	{
+	// Tabs.
+	if (ImGui::BeginTabBar("MyTabBar")) {
 		defer{ ImGui::EndTabBar(); };
 
 		bool AddressHoveredThisFrame = false;
@@ -246,196 +223,36 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 		static bool DrawHoveredAddresses = false;
 		defer{ DrawHoveredAddresses = AddressHoveredThisFrame; };
 
-		const char* Tabs[] = { "Objects", "Actors", "Watch" };
-		for (int TabIndex = 0; TabIndex < IM_ARRAYSIZE(Tabs); TabIndex++)
-		{
-			FString CurrentTab = Tabs[TabIndex];
-
-			static TArray<PropertyItem> ActorItems;
-			static bool UpdateActorsEveryFrame = false;
-			static bool SearchAroundPlayer = false;
-			static float ActorsSearchRadius = 5;
-			static bool DrawOverlapSphere = false;
-
-			if (ImGui::BeginTabItem(Tabs[TabIndex]))
-			{
+		static TArray<FString> Tabs = { "Objects", "Actors", "Watch" };
+		for (auto CurrentTab : Tabs) {
+			if (ImGui::BeginTabItem(Ansi(*CurrentTab))) {
 				defer{ ImGui::EndTabItem(); };
 
-				if (CurrentTab == "Watch") {
-					if (ImGui::Button("Clear All"))
-						WatchedMembers.Empty();
-					ImGui::SameLine();
-					if (ImGui::Button("Save"))
-						*WantsToSave = true;
-					ImGui::SameLine();
-					if (ImGui::Button("Load"))
-						*WantsToLoad = true;
-				} else if (CurrentTab == "Actors") {
-					static TArray<bool> CollisionChannelsActive;
-					static bool InitActors = true;
-					if (InitActors) {
-						InitActors = false;
-						int NumCollisionChannels = StaticEnum<ECollisionChannel>()->NumEnums();
-						for (int i = 0; i < NumCollisionChannels; i++)
-							CollisionChannelsActive.Push(false);
-					}
-
-					if (World->GetCurrentLevel()) {
-						ImGui::Text("Current World: %s, ", Ansi(*World->GetName()));
-						ImGui::SameLine();
-						ImGui::Text("Current Level: %s", Ansi(*World->GetCurrentLevel()->GetName()));
-						ImGui::Spacing();
-					}
-
-					bool UpdateActors = UpdateActorsEveryFrame;
-					if (UpdateActorsEveryFrame) ImGui::BeginDisabled();
-					if (ImGui::Button("Update Actors"))
-						UpdateActors = true;
-					ImGui::SameLine();
-					if (ImGui::Button("x", ImVec2(ImGui::GetFrameHeight(), 0)))
-						ActorItems.Empty();
-					if (UpdateActorsEveryFrame) ImGui::EndDisabled();
-
-					ImGui::SameLine();
-					ImGui::Checkbox("Update actors every frame", &UpdateActorsEveryFrame);
-					ImGui::SameLine();
-					ImGui::Checkbox("Search around player", &SearchAroundPlayer);
-					ImGui::Spacing();
-
-					bool DoRaytrace = false;
-					{
-						if (!SearchAroundPlayer) ImGui::BeginDisabled();
-
-						if (ImGui::Button("Set Channels"))
-							ImGui::OpenPopup("SetChannelsPopup");
-
-						if (ImGui::BeginPopup("SetChannelsPopup")) {
-							for (int i = 0; i < CollisionChannelsActive.Num(); i++) {
-								FString Name = StaticEnum<ECollisionChannel>()->GetNameStringByIndex(i);
-								ImGui::Selectable(Ansi(*Name), &CollisionChannelsActive[i], ImGuiSelectableFlags_DontClosePopups);
-							}
-
-							ImGui::Separator();
-							if (ImGui::Button("Clear All"))
-								for (auto& It : CollisionChannelsActive)
-									It = false;
-
-							ImGui::EndPopup();
-						}
-
-						static bool RaytraceReady = false;
-						ImGui::SameLine();
-						if (ImGui::Button("Do Mouse Trace")) {
-							ImGui::OpenPopup("PopupMouseTrace");
-							RaytraceReady = true;
-						}
-
-						if (ImGui::BeginPopup("PopupMouseTrace")) {
-							ImGui::Text("Click on screen to trace object.");
-							ImGui::EndPopup();
-						} else {
-							if (RaytraceReady) {
-								RaytraceReady = false;
-								DoRaytrace = true;
-							}
-						}
-
-						ImGui::SetNextItemWidth(150);
-						ImGui::InputFloat("Search radius in meters", &ActorsSearchRadius, 1.0, 1.0, "%.1f");
-						ImGui::SameLine();
-						ImGui::Checkbox("Draw Search sphere", &DrawOverlapSphere);
-
-						if (!SearchAroundPlayer) ImGui::EndDisabled();
-					}
-
-					{
-						APlayerController* PlayerController = World->GetFirstPlayerController();
-						TArray<TEnumAsByte<EObjectTypeQuery>> traceObjectTypes;
-						for (int i = 0; i < CollisionChannelsActive.Num(); i++) {
-							bool Active = CollisionChannelsActive[i];
-							if (Active)
-								traceObjectTypes.Add(UEngineTypes::ConvertToObjectType((ECollisionChannel)i));
-						}
-
-						FVector SpherePos = PlayerController->GetPawn()->GetActorTransform().GetLocation();
-						if (UpdateActors) {
-							ActorItems.Empty();
-
-							if (SearchAroundPlayer) {
-								TArray<AActor*> ResultActors;
-								{
-									//UClass* seekClass = AStaticMeshActor::StaticClass();					
-									UClass* seekClass = 0;
-									TArray<AActor*> ignoreActors = {};
-
-									UKismetSystemLibrary::SphereOverlapActors(World, SpherePos, ActorsSearchRadius * 100, traceObjectTypes, seekClass, ignoreActors, ResultActors);
-								}
-
-								for (auto It : ResultActors) {
-									if (!It) continue;
-									ActorItems.Push(MakeObjectItem(It));
-								}
-
-							} else {
-								ULevel* CurrentLevel = World->GetCurrentLevel();
-								if (CurrentLevel) {
-									for (auto& Actor : CurrentLevel->Actors) {
-										if (!Actor) continue;
-										ActorItems.Push(MakeObjectItem(Actor));
-									}
-								}
-							}
-						}
-
-						if (DrawOverlapSphere)
-							DrawDebugSphere(World, SpherePos, ActorsSearchRadius * 100, 20, FColor::Purple, false, 0.0f);
-
-						if (DoRaytrace) {
-							FHitResult HitResult;
-							bool Result = PlayerController->GetHitResultUnderCursorForObjects(traceObjectTypes, true, HitResult);
-							if (Result) {
-								AActor* HitActor = HitResult.GetActor();
-								if (HitActor)
-									ActorItems.Push(MakeObjectItem(HitActor));
-							}
-						}
-					}
-				}
+				if (CurrentTab == "Watch")
+					WatchTab(true, WatchedMembers, WantsToSave, WantsToLoad, CategoryItems);
+				else if (CurrentTab == "Actors")
+					ActorsTab(true, World);
 
 				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, FramePadding); defer{ ImGui::PopStyleVar(); };
 
-				ImVec2 TabItemSize = ImVec2(0, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing());
+				ImVec2 TableSize = ImVec2(0, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing());
 				ImGuiTableFlags TableFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
 					ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SortTristate;
-
 				if (CurrentTab == "Actors")
 					TableFlags |= ImGuiTableFlags_Sortable;
 
-				if (ImGui::BeginTable("table", 10, TableFlags, TabItemSize)) {
-					enum MyItemColumnID {
-						ColumnID_PropertyName,
-						ColumnID_PropertyCPPType,
-						ColumnID_Address,
-						ColumnID_Size,
-					};
-
-					int FlagSort = CurrentTab == "Actors" ? ImGuiTableColumnFlags_DefaultSort : ImGuiTableColumnFlags_NoSort;
-					int FlagNoSort = ImGuiTableColumnFlags_NoSort;
-					int FlagDefault = ImGuiTableColumnFlags_WidthStretch;
-
+				// Table.
+				if (ImGui::BeginTable("table", ColInfos.Infos.Num(), TableFlags, TableSize)) {
 					ImGui::TableSetupScrollFreeze(0, 1);
-					ImGui::TableSetupColumn("Property Name", FlagDefault | ImGuiTableColumnFlags_NoHide, 0.0, ColumnID_PropertyName);
-					ImGui::TableSetupColumn("Property Value", FlagDefault | FlagNoSort);
-					ImGui::TableSetupColumn("Metadata", FlagNoSort | ImGuiTableColumnFlags_DefaultHide | ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("(?)").x);
-					ImGui::TableSetupColumn("Property Type", FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide);
-					ImGui::TableSetupColumn("CPP Type", FlagDefault, 0.0, ColumnID_PropertyCPPType);
-					ImGui::TableSetupColumn("Owner Class", FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide);
-					ImGui::TableSetupColumn("Category", FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide);
-					ImGui::TableSetupColumn("Adress", FlagDefault | ImGuiTableColumnFlags_DefaultHide, 0.0, ColumnID_Address);
-					ImGui::TableSetupColumn("Size", FlagDefault | ImGuiTableColumnFlags_DefaultHide, 0.0, ColumnID_Size);
-					ImGui::TableSetupColumn("Remove", (CurrentTab == "Watch" ? 0 : ImGuiTableColumnFlags_Disabled) | ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
+					for (int i = 0; i < ColInfos.Infos.Num(); i++) {
+						auto It = ColInfos.Infos[i];
+						int Flags = It.Flags;
+						if (It.DisplayName == "Remove" && CurrentTab != "Watch")
+							Flags |= ImGuiTableColumnFlags_Disabled;
+						ImGui::TableSetupColumn(Ansi(*It.DisplayName), Flags, It.InitWidth, i);
+					}
 					ImGui::TableHeadersRow();
-
+					
 					TArray<FString> CurrentPath;
 					TreeState State = {};
 					State.SearchFilterActive = SearchFilterActive;
@@ -446,7 +263,7 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 					State.ListFunctionsOnObjectItems = ListFunctionsOnObjectItems;
 					State.SearchParser = SearchParser;
 
-					defer{
+					defer {
 						if (State.AddressWasHovered) {
 							State.AddressWasHovered = false;
 							AddressHoveredThisFrame = true;
@@ -454,102 +271,22 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 						};
 					};
 
-					if (CurrentTab == "Objects") { // @ObjectsTable
-						for (auto& Category : CategoryItems) {
-							bool MakeCategorySection = !Category.Name.IsEmpty();
+					if (CurrentTab == "Objects")
+						ObjectsTab(false, CategoryItems, &State);
+					else if (CurrentTab == "Actors")
+						ActorsTab(false, World, &State, &ColInfos);
+					else if (CurrentTab == "Watch")
+						WatchTab(false, WatchedMembers, WantsToSave, WantsToLoad, CategoryItems, &State);
 
-							TreeNodeState NodeState = {};
-							if (MakeCategorySection)
-								BeginSection(Category.Name, NodeState, State, -1, ImGuiTreeNodeFlags_DefaultOpen);
+					// Allow overscroll.
+					{
+						// Calculations are off, but it's fine for now.
+						float Offset = ImGui::TableGetHeaderRowHeight() + ImGui::GetTextLineHeight() * 2 + ImGui::GetStyle().FramePadding.y * 2;
+						ImGui::TableNextRow(0, TableSize.y - Offset);
+						ImGui::TableNextColumn();
 
-							if (NodeState.IsOpen || !MakeCategorySection)
-								for (auto& Item : Category.Items)
-									DrawItemRow(State, Item, CurrentPath);
-
-							if (MakeCategorySection)
-								EndSection(NodeState, State);
-						}
-
-					} else if (CurrentTab == "Actors") { // @ActorsTable
-						// Sorting.
-						{
-							static ImGuiTableSortSpecs* s_current_sort_specs = NULL;
-
-							auto SortFun = [](const void* lhs, const void* rhs) -> int {
-								PropertyItem* a = (PropertyItem*)lhs;
-								PropertyItem* b = (PropertyItem*)rhs;
-								for (int n = 0; n < s_current_sort_specs->SpecsCount; n++) {
-									const ImGuiTableColumnSortSpecs* sort_spec = &s_current_sort_specs->Specs[n];
-									int delta = 0;
-									switch (sort_spec->ColumnUserID)
-									{
-									case ColumnID_PropertyName:    delta = (strcmp(Ansi(*((UObject*)a->Ptr)->GetName()), Ansi(*((UObject*)b->Ptr)->GetName()))); break;
-									case ColumnID_PropertyCPPType: delta = (strcmp(Ansi(*a->GetCPPType()), Ansi(*b->GetCPPType()))); break;
-									case ColumnID_Address:         delta = ((int64)a->Ptr - (int64)b->Ptr); break;
-									case ColumnID_Size:            delta = (a->GetSize() - b->GetSize()); break;
-									default: IM_ASSERT(0); break;
-									}
-									if (delta > 0)
-										return (sort_spec->SortDirection == ImGuiSortDirection_Ascending) ? +1 : -1;
-									if (delta < 0)
-										return (sort_spec->SortDirection == ImGuiSortDirection_Ascending) ? -1 : +1;
-								}
-
-								return ((int64)a->Ptr - (int64)b->Ptr);
-							};
-
-							if (ImGuiTableSortSpecs* sorts_specs = ImGui::TableGetSortSpecs()) {
-								if (sorts_specs->SpecsDirty) {
-									s_current_sort_specs = sorts_specs; // Store in variable accessible by the sort function.
-									if (ActorItems.Num() > 1)
-										qsort(ActorItems.GetData(), (size_t)ActorItems.Num(), sizeof(ActorItems[0]), SortFun);
-									s_current_sort_specs = NULL;
-									sorts_specs->SpecsDirty = false;
-								}
-							}
-						}
-
-						for (auto& Item : ActorItems)
-							DrawItemRow(State, Item, CurrentPath);
-
-					} else if (CurrentTab == "Watch") { // @WatchTable
-						int MemberIndexToDelete = -1;
-
-						bool MoveHappened = false;
-						int MoveIndexFrom = -1;
-						int MoveIndexTo = -1;
-						FString NewPathName;
-
-						int i = 0;
-						for (auto& Member : WatchedMembers) {
-							State.CurrentWatchItemIndex = i++;
-							State.WatchItemGotDeleted = false;
-							State.RenameHappened = false;
-							State.PathStringPtr = &Member.PathString;
-
-							bool Found = Member.UpdateItemFromPath(Items);
-							if (!Found) {
-								Member.CachedItem.Ptr = 0;
-								Member.CachedItem.Prop = 0;
-							}
-
-							DrawItemRow(State, Member.CachedItem, CurrentPath);
-
-							if (State.WatchItemGotDeleted)
-								MemberIndexToDelete = State.CurrentWatchItemIndex;
-
-							if (State.MoveHappened) {
-								MoveHappened = true;
-								MoveIndexFrom = State.MoveFrom;
-								MoveIndexTo = State.MoveTo;
-							}
-						}
-
-						if (MemberIndexToDelete != -1)
-							WatchedMembers.RemoveAt(MemberIndexToDelete);
-
-						if (MoveHappened)
-							WatchedMembers.Swap(MoveIndexFrom, MoveIndexTo);
+						auto BGColor = ImGui::GetStyleColorVec4(ImGuiCol_TableRowBg);
+						ImGui::TableSetBgColor(ImGuiTableBgTarget_::ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(BGColor), -1);
 					}
 
 					ImGui::EndTable();
@@ -573,6 +310,276 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 		}
 	}
 }
+
+void ObjectsTab(bool DrawControls, TArray<PropertyItemCategory>& CategoryItems, TreeState* State) {
+	if (DrawControls) {
+		return;
+	}
+	
+	TArray<FString> CurrentPath;
+	for (auto& Category : CategoryItems) {
+		bool MakeCategorySection = !Category.Name.IsEmpty();
+
+		TreeNodeState NodeState = {};
+		if (MakeCategorySection)
+			BeginSection(Category.Name, NodeState, *State, -1, ImGuiTreeNodeFlags_DefaultOpen);
+
+		if (NodeState.IsOpen || !MakeCategorySection)
+			for (auto& Item : Category.Items)
+				DrawItemRow(*State, Item, CurrentPath);
+
+		if (MakeCategorySection)
+			EndSection(NodeState, *State);
+	}
+}
+
+void ActorsTab(bool DrawControls, UWorld* World, TreeState* State, ColumnInfos* ColInfos) {
+	static TArray<PropertyItem> ActorItems;
+	static bool UpdateActorsEveryFrame = false;
+	static bool SearchAroundPlayer = false;
+	static float ActorsSearchRadius = 5;
+	static bool DrawOverlapSphere = false;
+
+	if (DrawControls) {
+		static TArray<bool> CollisionChannelsActive;
+		static bool InitActors = true;
+		if (InitActors) {
+			InitActors = false;
+			int NumCollisionChannels = StaticEnum<ECollisionChannel>()->NumEnums();
+			for (int i = 0; i < NumCollisionChannels; i++)
+				CollisionChannelsActive.Push(false);
+		}
+
+		if (!World)
+			return;
+
+		if (World->GetCurrentLevel()) {
+			ImGui::Text("Current World: %s, ", Ansi(*World->GetName()));
+			ImGui::SameLine();
+			ImGui::Text("Current Level: %s", Ansi(*World->GetCurrentLevel()->GetName()));
+			ImGui::Spacing();
+		}
+
+		bool UpdateActors = UpdateActorsEveryFrame;
+		if (UpdateActorsEveryFrame) ImGui::BeginDisabled();
+		if (ImGui::Button("Update Actors"))
+			UpdateActors = true;
+		ImGui::SameLine();
+		if (ImGui::Button("x", ImVec2(ImGui::GetFrameHeight(), 0)))
+			ActorItems.Empty();
+		if (UpdateActorsEveryFrame) ImGui::EndDisabled();
+
+		ImGui::SameLine();
+		ImGui::Checkbox("Update actors every frame", &UpdateActorsEveryFrame);
+		ImGui::SameLine();
+		ImGui::Checkbox("Search around player", &SearchAroundPlayer);
+		ImGui::Spacing();
+
+		bool DoRaytrace = false;
+		{
+			if (!SearchAroundPlayer) ImGui::BeginDisabled();
+
+			if (ImGui::Button("Set Channels"))
+				ImGui::OpenPopup("SetChannelsPopup");
+
+			if (ImGui::BeginPopup("SetChannelsPopup")) {
+				for (int i = 0; i < CollisionChannelsActive.Num(); i++) {
+					FString Name = StaticEnum<ECollisionChannel>()->GetNameStringByIndex(i);
+					ImGui::Selectable(Ansi(*Name), &CollisionChannelsActive[i], ImGuiSelectableFlags_DontClosePopups);
+				}
+
+				ImGui::Separator();
+				if (ImGui::Button("Clear All"))
+					for (auto& It : CollisionChannelsActive)
+						It = false;
+
+				ImGui::EndPopup();
+			}
+
+			static bool RaytraceReady = false;
+			ImGui::SameLine();
+			if (ImGui::Button("Do Mouse Trace")) {
+				ImGui::OpenPopup("PopupMouseTrace");
+				RaytraceReady = true;
+			}
+
+			if (ImGui::BeginPopup("PopupMouseTrace")) {
+				ImGui::Text("Click on screen to trace object.");
+				ImGui::EndPopup();
+			} else {
+				if (RaytraceReady) {
+					RaytraceReady = false;
+					DoRaytrace = true;
+				}
+			}
+
+			ImGui::SetNextItemWidth(150);
+			ImGui::InputFloat("Search radius in meters", &ActorsSearchRadius, 1.0, 1.0, "%.1f");
+			ImGui::SameLine();
+			ImGui::Checkbox("Draw Search sphere", &DrawOverlapSphere);
+
+			if (!SearchAroundPlayer) ImGui::EndDisabled();
+		}
+
+		{
+			APlayerController* PlayerController = World->GetFirstPlayerController();
+			TArray<TEnumAsByte<EObjectTypeQuery>> traceObjectTypes;
+			for (int i = 0; i < CollisionChannelsActive.Num(); i++) {
+				bool Active = CollisionChannelsActive[i];
+				if (Active)
+					traceObjectTypes.Add(UEngineTypes::ConvertToObjectType((ECollisionChannel)i));
+			}
+
+			FVector SpherePos = PlayerController->GetPawn()->GetActorTransform().GetLocation();
+			if (UpdateActors) {
+				ActorItems.Empty();
+
+				if (SearchAroundPlayer) {
+					TArray<AActor*> ResultActors;
+					{
+						//UClass* seekClass = AStaticMeshActor::StaticClass();					
+						UClass* seekClass = 0;
+						TArray<AActor*> ignoreActors = {};
+
+						UKismetSystemLibrary::SphereOverlapActors(World, SpherePos, ActorsSearchRadius * 100, traceObjectTypes, seekClass, ignoreActors, ResultActors);
+					}
+
+					for (auto It : ResultActors) {
+						if (!It) continue;
+						ActorItems.Push(MakeObjectItem(It));
+					}
+
+				} else {
+					ULevel* CurrentLevel = World->GetCurrentLevel();
+					if (CurrentLevel) {
+						for (auto& Actor : CurrentLevel->Actors) {
+							if (!Actor) continue;
+							ActorItems.Push(MakeObjectItem(Actor));
+						}
+					}
+				}
+			}
+
+			if (DrawOverlapSphere)
+				DrawDebugSphere(World, SpherePos, ActorsSearchRadius * 100, 20, FColor::Purple, false, 0.0f);
+
+			if (DoRaytrace) {
+				FHitResult HitResult;
+				bool Result = PlayerController->GetHitResultUnderCursorForObjects(traceObjectTypes, true, HitResult);
+				if (Result) {
+					AActor* HitActor = HitResult.GetActor();
+					if (HitActor)
+						ActorItems.Push(MakeObjectItem(HitActor));
+				}
+			}
+		}
+
+		return;
+	}
+
+	// Sorting.
+	{
+		static ImGuiTableSortSpecs* s_current_sort_specs = NULL;
+		static const int NameID    = ColInfos->GetIndexByName("name");
+		static const int CPPTypeID = ColInfos->GetIndexByName("cpptype");
+		static const int AddressID = ColInfos->GetIndexByName("address");
+		static const int SizeID    = ColInfos->GetIndexByName("size");
+
+		auto SortFun = [](const void* lhs, const void* rhs) -> int {
+			PropertyItem* a = (PropertyItem*)lhs;
+			PropertyItem* b = (PropertyItem*)rhs;
+			for (int n = 0; n < s_current_sort_specs->SpecsCount; n++) {
+				const ImGuiTableColumnSortSpecs* sort_spec = &s_current_sort_specs->Specs[n];
+				int delta = 0;
+				if      (sort_spec->ColumnUserID == NameID)    delta = (strcmp(Ansi(*((UObject*)a->Ptr)->GetName()), Ansi(*((UObject*)b->Ptr)->GetName())));
+				else if (sort_spec->ColumnUserID == CPPTypeID) delta = (strcmp(Ansi(*a->GetCPPType()), Ansi(*b->GetCPPType())));
+				else if (sort_spec->ColumnUserID == AddressID) delta = ((int64)a->Ptr - (int64)b->Ptr);
+				else if (sort_spec->ColumnUserID == SizeID)    delta = (a->GetSize() - b->GetSize());
+				else IM_ASSERT(0);
+
+				if (delta > 0)
+					return (sort_spec->SortDirection == ImGuiSortDirection_Ascending) ? +1 : -1;
+				if (delta < 0)
+					return (sort_spec->SortDirection == ImGuiSortDirection_Ascending) ? -1 : +1;
+			}
+
+			return ((int64)a->Ptr - (int64)b->Ptr);
+		};
+
+		if (ImGuiTableSortSpecs* sorts_specs = ImGui::TableGetSortSpecs()) {
+			if (sorts_specs->SpecsDirty) {
+				s_current_sort_specs = sorts_specs; // Store in variable accessible by the sort function.
+				if (ActorItems.Num() > 1)
+					qsort(ActorItems.GetData(), (size_t)ActorItems.Num(), sizeof(ActorItems[0]), SortFun);
+				s_current_sort_specs = NULL;
+				sorts_specs->SpecsDirty = false;
+			}
+		}
+	}
+	
+	TArray<FString> CurrentPath;
+	for (auto& Item : ActorItems)
+		DrawItemRow(*State, Item, CurrentPath);
+}
+
+void WatchTab(bool DrawControls, TArray<MemberPath>& WatchedMembers, bool* WantsToSave, bool* WantsToLoad, TArray<PropertyItemCategory>& CategoryItems, TreeState* State) {
+	if (DrawControls) {
+		if (ImGui::Button("Clear All"))
+			WatchedMembers.Empty();
+		ImGui::SameLine();
+		if (ImGui::Button("Save"))
+			*WantsToSave = true;
+		ImGui::SameLine();
+		if (ImGui::Button("Load"))
+			*WantsToLoad = true;
+
+		return;
+	}
+
+	TArray<PropertyItem> Items;
+	for (auto& It : CategoryItems)
+		Items.Append(It.Items);
+
+	TArray<FString> CurrentPath;
+	int MemberIndexToDelete = -1;
+	bool MoveHappened = false;
+	int MoveIndexFrom = -1;
+	int MoveIndexTo = -1;
+	FString NewPathName;
+
+	int i = 0;
+	for (auto& Member : WatchedMembers) {
+		State->CurrentWatchItemIndex = i++;
+		State->WatchItemGotDeleted = false;
+		State->RenameHappened = false;
+		State->PathStringPtr = &Member.PathString;
+
+		bool Found = Member.UpdateItemFromPath(Items);
+		if (!Found) {
+			Member.CachedItem.Ptr = 0;
+			Member.CachedItem.Prop = 0;
+		}
+
+		DrawItemRow(*State, Member.CachedItem, CurrentPath);
+
+		if (State->WatchItemGotDeleted)
+			MemberIndexToDelete = State->CurrentWatchItemIndex;
+
+		if (State->MoveHappened) {
+			MoveHappened = true;
+			MoveIndexFrom = State->MoveFrom;
+			MoveIndexTo = State->MoveTo;
+		}
+	}
+
+	if (MemberIndexToDelete != -1)
+		WatchedMembers.RemoveAt(MemberIndexToDelete);
+
+	if (MoveHappened)
+		WatchedMembers.Swap(MoveIndexFrom, MoveIndexTo);
+}
+
+//
 
 void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex) {
 	if (State.ItemDrawCount > 100000) // @Todo: Random safety measure against infinite recursion, do better.
@@ -605,7 +612,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 	// Misc setup.
 
 	State.ItemDrawCount++;
-	CurrentMemberPath.Push(Item.GetDisplayName());
+	CurrentMemberPath.Push(Item.GetAuthoredName());
 
 	if (StackIndex == 0) {
 		if (!Item.NameIDOverwrite.IsEmpty())
@@ -615,7 +622,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 		else
 			ImGui::PushID(Item.Ptr);
 	} else
-		ImGui::PushID(Ansi(*Item.GetDisplayName()));
+		ImGui::PushID(Ansi(*Item.GetAuthoredName()));
 
 	TreeNodeState NodeState;
 
@@ -933,9 +940,8 @@ FString PropertyWatcher::GetColumnCellText(TreeState& State, PropertyItem& Item,
 			bool PathIsEditable = TopLevelWatchListItem && State.PathStringPtr;
 
 			if (!PathIsEditable) {
-				FString StrName = Item.GetDisplayName();
-
 				if (State.ForceInlineChildItems) {
+					FString StrName = Item.GetAuthoredName();
 					TArray<FString> InlinedMemberPath = *CurrentMemberPath;
 					for (int i = 0; i < State.InlineMemberPathIndexOffset; i++) {
 						if (InlinedMemberPath.Num())
@@ -944,7 +950,7 @@ FString PropertyWatcher::GetColumnCellText(TreeState& State, PropertyItem& Item,
 					InlinedMemberPath.Push(StrName);
 					Result = FString::Join(InlinedMemberPath, TEXT("."));
 				} else
-					Result = StrName;
+					Result = Item.GetDisplayName();
 			}
 		}
 
@@ -1300,7 +1306,7 @@ bool PropertyWatcher::MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items
 	{
 		bool Found = false;
 		for (auto& It : Items)
-			if (It.GetDisplayName() == MemberArray[0]) {
+			if (It.GetAuthoredName() == MemberArray[0]) {
 				CurrentItem = It;
 				Found = true;
 			}
@@ -1331,7 +1337,7 @@ bool PropertyWatcher::MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items
 			CurrentItem.GetMembers(&Members);
 			bool Found = false;
 			for (auto MemberItem : Members) {
-				FString ItemName = MemberItem.GetDisplayName();
+				FString ItemName = MemberItem.GetAuthoredName();
 
 				if (SearchByMemberValue) {
 					//if (ItemName == MemberNameToTest) {
@@ -1399,6 +1405,15 @@ FString PropertyItem::GetName() {
 		return StructPtr->GetAuthoredName();
 
 	return "";
+}
+
+FString PropertyItem::GetDisplayName() {
+	// I think when IsArrayMember then PointerType::Property is given, but anyway.
+	// This displays objects in containers like this [0] - <ObjectName>
+	if (IsArrayMember && Type == PointerType::Property && CastField<FObjectProperty>(Prop) && Ptr)
+		return FString::Printf(TEXT("%s - %s"), *GetAuthoredName(), *((UObject*)Ptr)->GetName());
+	
+	return GetAuthoredName();
 }
 
 bool PropertyItem::IsExpandable() {
@@ -1526,9 +1541,10 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 
 		if (!MemberArray) return ScriptArrayHelper.Num();
 		FProperty* MemberProp = ArrayProp->Inner;
+		bool IsObjectProp = (bool)CastField<FObjectProperty>(MemberProp);
 		for (int i = 0; i < ScriptArrayHelper.Num(); i++) {
 			void* MemberPtr = ContainerToValuePointer(PointerType::Array, ScriptArrayHelper.GetRawPtr(i), MemberProp);
-			MemberArray->Push(MakeArrayItem(MemberPtr, MemberProp, i));
+			MemberArray->Push(MakeArrayItem(MemberPtr, MemberProp, i, IsObjectProp));
 		}
 
 	} else if (Type == PointerType::Struct || CastField<FStructProperty>(Prop)) {
@@ -1551,13 +1567,19 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 
 		auto KeyProp = Helper.GetKeyProperty();
 		auto ValueProp = Helper.GetValueProperty();
+		bool KeyPropIsObjectProp = (bool)CastField<FObjectProperty>(KeyProp);
+		bool ValuePropIsObjectProp = (bool)CastField<FObjectProperty>(ValueProp);
 		for (int i = 0; i < Helper.Num(); i++) {
 			uint8* KeyPtr = Helper.GetKeyPtr(i);
 			uint8* ValuePtr = Helper.GetValuePtr(i);
 			void* ValuePtr2 = ContainerToValuePointer(PointerType::Map, ValuePtr, ValueProp);
 
-			MemberArray->Push(MakePropertyItemNamed(KeyPtr, KeyProp, FString::Printf(TEXT("[%d] Key"), i)));
-			MemberArray->Push(MakePropertyItemNamed(ValuePtr2, ValueProp, FString::Printf(TEXT("[%d] Value"), i)));
+			auto KeyItem = MakeArrayItem(KeyPtr, KeyProp, i, KeyPropIsObjectProp);
+			auto ValueItem = MakeArrayItem(ValuePtr2, ValueProp, i, ValuePropIsObjectProp);
+			KeyItem.NameOverwrite.Append(" Key");
+			ValueItem.NameOverwrite.Append(" Value");
+			MemberArray->Push(KeyItem);
+			MemberArray->Push(ValueItem);
 		}
 
 	} else if (FSetProperty* SetProp = CastField<FSetProperty>(Prop)) {
@@ -1565,11 +1587,11 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 		if (!MemberArray) return Helper.Num();
 
 		FProperty* MemberProp = Helper.GetElementProperty();
+		bool IsObjectProp = (bool)CastField<FObjectProperty>(MemberProp);
 		for (int i = 0; i < Helper.Num(); i++) {
 			void* MemberPtr = Helper.Set->GetData(i, Helper.SetLayout);
 			MemberPtr = ContainerToValuePointer(PointerType::Array, MemberPtr, MemberProp);
-
-			MemberArray->Push(MakeArrayItem(MemberPtr, MemberProp, i));
+			MemberArray->Push(MakeArrayItem(MemberPtr, MemberProp, i, IsObjectProp));
 		}
 
 	} else if (FDelegateProperty* DelegateProp = CastField<FDelegateProperty>(Prop)) {
@@ -1631,8 +1653,8 @@ PropertyItem PropertyWatcher::MakeObjectItem(void* _Ptr) {
 PropertyItem PropertyWatcher::MakeObjectItemNamed(void* _Ptr, FString _NameOverwrite, FString NameID) {
 	return { PointerType::Object, _Ptr, 0, _NameOverwrite, 0, NameID };
 }
-PropertyItem PropertyWatcher::MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index) {
-	return { PointerType::Property, _Ptr, _Prop, FString::Printf(TEXT("[%d]"), _Index) };
+PropertyItem PropertyWatcher::MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index, bool IsObjectProp) {
+	return { PointerType::Property, _Ptr, _Prop, FString::Printf(TEXT("[%d]"), _Index), 0, "", true };
 }
 PropertyItem PropertyWatcher::MakePropertyItem(void* _Ptr, FProperty* _Prop) {
 	return { PointerType::Property, _Ptr, _Prop };

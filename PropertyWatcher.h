@@ -1,5 +1,5 @@
 /*
-	PropertyWatcher - v0.3 - http://github.com/guitarfreak/PropertyWatcher
+	PropertyWatcher - v0.3.1 - http://github.com/guitarfreak/PropertyWatcher
 	by Roy Thieme
 
 	INFO:
@@ -86,6 +86,9 @@ namespace PropertyWatcher {
 	};
 
 	struct PropertyItem {
+		// Maybe in future write list of all possible combinations that are possible and or used in code.
+		// So we don't have to check everything all the time.
+
 		PointerType Type = PointerType::Property;
 		void* Ptr = 0;
 		FProperty* Prop = 0;
@@ -93,9 +96,14 @@ namespace PropertyWatcher {
 		UStruct* StructPtr = 0; // Top level structs use this as UScriptStruct and Functions as UFunction
 		FString NameIDOverwrite = ""; // Optional
 
+		// Awkward, but we wan't the ability to display array members as [0] - <ObjectName> for example.
+		// But we can't use PointerType::Array for that, because that's set to Property.
+		bool IsArrayMember = false;
+
 		bool IsValid() { return !(Ptr == 0 && Prop == 0); };
 		FString GetName();
-		FString GetDisplayName() { return !NameOverwrite.IsEmpty() ? NameOverwrite : GetName(); }
+		FString GetAuthoredName() { return !NameOverwrite.IsEmpty() ? NameOverwrite : GetName(); }
+		FString GetDisplayName();
 		bool IsExpandable();
 		FString GetPropertyType();
 		FString GetCPPType();
@@ -122,7 +130,7 @@ namespace PropertyWatcher {
 
 	PropertyItem MakeObjectItem(void* _Ptr);
 	PropertyItem MakeObjectItemNamed(void* _Ptr, FString _NameOverwrite, FString NameID = "");
-	PropertyItem MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index);
+	PropertyItem MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index, bool IsObjectProp = false);
 	PropertyItem MakePropertyItem(void* _Ptr, FProperty* _Prop);
 	PropertyItem MakeFunctionItem(void* _Ptr, UFunction* _Function);
 	PropertyItem MakePropertyItemNamed(void* _Ptr, FProperty* _Prop, FString Name, FString DisplayName = "");
@@ -307,6 +315,36 @@ namespace PropertyWatcher {
 		bool ActivatedForceToggleNodeOpenClose;
 		bool InlineChildren;
 		bool ItemIsInlined;
+	};
+
+	struct ColumnInfo {
+		FString Name;
+		FString DisplayName;
+		int Flags;
+		float InitWidth = 0.0f;
+	};
+
+	struct ColumnInfos {
+		TArray<ColumnInfo> Infos;
+
+		ColumnInfo& GetByName(FString _Name) {
+			for (int i = 0; i < Infos.Num() - 1; i++)
+				if (Infos[i].Name == _Name)
+					return Infos[i];
+		}
+		int GetIndexByName(FString _Name) {
+			for (int i = 0; i < Infos.Num() - 1; i++)
+				if (Infos[i].Name == _Name)
+					return i;
+			return -1;
+		}
+		TArray<FString> GetSearchNameArray() {
+			TArray<FString> Names;
+			for (auto It : Infos)
+				if (!It.Name.IsEmpty())
+					Names.Add(It.Name);
+			return Names;
+		}
 	};
 
 	void SetTableRowBackgroundByStackIndex(int StackIndex);
