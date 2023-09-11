@@ -97,6 +97,7 @@
 		- Variable/function categories.
 		- Remember opened tree nodes between restarts.
 		- Add filter mode that hides everything.
+		- Look at performance.
 */
 
 #if !UE_SERVER
@@ -135,10 +136,18 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 	*WantsToSave = false;
 	*WantsToLoad = false;
 
+	// Performance test.
+	static const int TimerCount = 30;
+	static double Timers[TimerCount] = {};
+	static int TimerIndex = 0;
+	double StartTime = FPlatformTime::Seconds();
+
 	ImGui::SetNextWindowSize(ImVec2(430, 450), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin(Ansi(*("Property Watcher: " + WindowName)), IsOpen, ImGuiWindowFlags_MenuBar)) { ImGui::End(); return; }
 
 	static ImVec2 FramePadding = ImVec2(ImGui::GetStyle().FramePadding.x, 2);
+	static bool ShowObjectNamesOnAllProperties = true;
+	static bool ShowPerformanceInfo = false;
 
 	// Menu.
 	if (ImGui::BeginMenuBar()) {
@@ -150,6 +159,12 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 			ImGui::DragFloat2("Item Padding", &FramePadding[0], 0.1f, 0.0, 20.0f, "%.0f");
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
 				FramePadding = ImVec2(ImGui::GetStyle().FramePadding.x, 2);
+
+			ImGui::Checkbox("Show object names on all properties", &ShowObjectNamesOnAllProperties);
+			ImGuiAddon::QuickTooltip("This puts the (<ObjectName>) at the end of properties that are also objects.");
+
+			ImGui::Checkbox("Show performance info", &ShowPerformanceInfo);
+			ImGuiAddon::QuickTooltip("Displays item count and average elapsed time in ms.");
 		}
 		if (ImGui::BeginMenu("Help")) {
 			defer{ ImGui::EndMenu(); };
@@ -174,7 +189,7 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 	}
 
 	// Top region.
-	static bool ListFunctionsOnObjectItems = true;
+	static bool ListFunctionsOnObjectItems = false;
 	static bool EnableClassCategoriesOnObjectItems = true;
 	static bool SearchFilterActive = false;
 	static char SearchString[100];
@@ -215,6 +230,7 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 	}
 
 	// Tabs.
+	int ItemCount = 0;
 	if (ImGui::BeginTabBar("MyTabBar")) {
 		defer{ ImGui::EndTabBar(); };
 
@@ -235,7 +251,10 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 
 				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, FramePadding); defer{ ImGui::PopStyleVar(); };
 
-				ImVec2 TableSize = ImVec2(0, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing());
+				ImVec2 TableSize = ImVec2(0, ImGui::GetContentRegionAvail().y);
+				if (ShowPerformanceInfo)
+					TableSize.y -= ImGui::GetTextLineHeightWithSpacing();
+
 				ImGuiTableFlags TableFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
 					ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SortTristate;
 				if (CurrentTab == "Actors")
@@ -261,6 +280,7 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 					State.CurrentWatchItemIndex = -1;
 					State.EnableClassCategoriesOnObjectItems = EnableClassCategoriesOnObjectItems;
 					State.ListFunctionsOnObjectItems = ListFunctionsOnObjectItems;
+					State.ShowObjectNamesOnAllProperties = ShowObjectNamesOnAllProperties;
 					State.SearchParser = SearchParser;
 
 					defer {
@@ -289,10 +309,26 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 						ImGui::TableSetBgColor(ImGuiTableBgTarget_::ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(BGColor), -1);
 					}
 
+					ItemCount = State.ItemDrawCount;
 					ImGui::EndTable();
-					ImGui::Text("Item count: %d", State.ItemDrawCount);
 				}
 			}
+		}
+	}
+
+	if (ShowPerformanceInfo) {
+		ImGui::Text("Item: %d", ItemCount);
+		ImGui::SameLine();
+		ImGui::Text("-");
+		ImGui::SameLine();
+		{
+			Timers[TimerIndex] = FPlatformTime::Seconds() - StartTime;
+			TimerIndex = (TimerIndex + 1) % TimerCount;
+			double AverageTime = 0;
+			for (int i = 0; i < TimerCount; i++)
+				AverageTime += Timers[i];
+			AverageTime /= TimerCount;
+			ImGui::Text("%.3f ms", AverageTime * 1000.0f);
 		}
 	}
 
@@ -634,6 +670,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 	};
 
 	// @Column(name): Property name
+	bool IsNameNodeVisible = true;
 	{
 		if (!Item.IsValid()) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 		defer{ if (!Item.IsValid()) ImGui::PopStyleColor(1); };
@@ -649,6 +686,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 			}
 
 			BeginTreeNode("##Object", FindOrGetColumnText("name"), NodeState, State, StackIndex, 0);
+			IsNameNodeVisible = ImGui::IsItemVisible();
 		}
 
 		bool NodeIsMarkedAsInlined = false;
@@ -737,11 +775,21 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 			ImGui::SameLine();
 			ImGui::Text("*");
 		}
+
+		// This puts the (<ObjectName>) at the end of properties that are also objects.
+		if (State.ShowObjectNamesOnAllProperties) {
+			if (Item.Type == PointerType::Property && CastField<FObjectProperty>(Item.Prop) && Item.Ptr) {
+				ImGui::SameLine();
+				ImGui::BeginDisabled();
+				ImGui::Text(Ansi(*FString::Printf(TEXT("(%s)"), *((UObject*)Item.Ptr)->GetName())));
+				ImGui::EndDisabled();
+			}
+		}
 	}
 
 	// Draw other columns if visible. 
 	// @Todo: Should check row and not tree node for visibility.
-	if (!ImGui::IsItemVisible()) {
+	if (!IsNameNodeVisible) {
 		ImGui::TableSetColumnIndex(ImGui::TableGetColumnCount() - 1);
 
 	} else {
@@ -950,7 +998,7 @@ FString PropertyWatcher::GetColumnCellText(TreeState& State, PropertyItem& Item,
 					InlinedMemberPath.Push(StrName);
 					Result = FString::Join(InlinedMemberPath, TEXT("."));
 				} else
-					Result = Item.GetDisplayName();
+					Result = Item.GetAuthoredName();
 			}
 		}
 
@@ -1408,12 +1456,11 @@ FString PropertyItem::GetName() {
 }
 
 FString PropertyItem::GetDisplayName() {
-	// I think when IsArrayMember then PointerType::Property is given, but anyway.
-	// This displays objects in containers like this [0] - <ObjectName>
-	if (IsArrayMember && Type == PointerType::Property && CastField<FObjectProperty>(Prop) && Ptr)
-		return FString::Printf(TEXT("%s - %s"), *GetAuthoredName(), *((UObject*)Ptr)->GetName());
-	
-	return GetAuthoredName();
+	FString Result = GetAuthoredName();
+	if (Type == PointerType::Property && CastField<FObjectProperty>(Prop) && Ptr)
+		Result = FString::Printf(TEXT("%s (%s)"), *Result, *((UObject*)Ptr)->GetName());
+
+	return Result;
 }
 
 bool PropertyItem::IsExpandable() {
@@ -1541,10 +1588,9 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 
 		if (!MemberArray) return ScriptArrayHelper.Num();
 		FProperty* MemberProp = ArrayProp->Inner;
-		bool IsObjectProp = (bool)CastField<FObjectProperty>(MemberProp);
 		for (int i = 0; i < ScriptArrayHelper.Num(); i++) {
 			void* MemberPtr = ContainerToValuePointer(PointerType::Array, ScriptArrayHelper.GetRawPtr(i), MemberProp);
-			MemberArray->Push(MakeArrayItem(MemberPtr, MemberProp, i, IsObjectProp));
+			MemberArray->Push(MakeArrayItem(MemberPtr, MemberProp, i));
 		}
 
 	} else if (Type == PointerType::Struct || CastField<FStructProperty>(Prop)) {
@@ -1567,15 +1613,13 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 
 		auto KeyProp = Helper.GetKeyProperty();
 		auto ValueProp = Helper.GetValueProperty();
-		bool KeyPropIsObjectProp = (bool)CastField<FObjectProperty>(KeyProp);
-		bool ValuePropIsObjectProp = (bool)CastField<FObjectProperty>(ValueProp);
 		for (int i = 0; i < Helper.Num(); i++) {
 			uint8* KeyPtr = Helper.GetKeyPtr(i);
 			uint8* ValuePtr = Helper.GetValuePtr(i);
 			void* ValuePtr2 = ContainerToValuePointer(PointerType::Map, ValuePtr, ValueProp);
 
-			auto KeyItem = MakeArrayItem(KeyPtr, KeyProp, i, KeyPropIsObjectProp);
-			auto ValueItem = MakeArrayItem(ValuePtr2, ValueProp, i, ValuePropIsObjectProp);
+			auto KeyItem = MakeArrayItem(KeyPtr, KeyProp, i);
+			auto ValueItem = MakeArrayItem(ValuePtr2, ValueProp, i);
 			KeyItem.NameOverwrite.Append(" Key");
 			ValueItem.NameOverwrite.Append(" Value");
 			MemberArray->Push(KeyItem);
@@ -1587,11 +1631,10 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 		if (!MemberArray) return Helper.Num();
 
 		FProperty* MemberProp = Helper.GetElementProperty();
-		bool IsObjectProp = (bool)CastField<FObjectProperty>(MemberProp);
 		for (int i = 0; i < Helper.Num(); i++) {
 			void* MemberPtr = Helper.Set->GetData(i, Helper.SetLayout);
 			MemberPtr = ContainerToValuePointer(PointerType::Array, MemberPtr, MemberProp);
-			MemberArray->Push(MakeArrayItem(MemberPtr, MemberProp, i, IsObjectProp));
+			MemberArray->Push(MakeArrayItem(MemberPtr, MemberProp, i));
 		}
 
 	} else if (FDelegateProperty* DelegateProp = CastField<FDelegateProperty>(Prop)) {
@@ -1654,7 +1697,7 @@ PropertyItem PropertyWatcher::MakeObjectItemNamed(void* _Ptr, FString _NameOverw
 	return { PointerType::Object, _Ptr, 0, _NameOverwrite, 0, NameID };
 }
 PropertyItem PropertyWatcher::MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index, bool IsObjectProp) {
-	return { PointerType::Property, _Ptr, _Prop, FString::Printf(TEXT("[%d]"), _Index), 0, "", true };
+	return { PointerType::Property, _Ptr, _Prop, FString::Printf(TEXT("[%d]"), _Index) };
 }
 PropertyItem PropertyWatcher::MakePropertyItem(void* _Ptr, FProperty* _Prop) {
 	return { PointerType::Property, _Ptr, _Prop };

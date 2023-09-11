@@ -1,5 +1,5 @@
 /*
-	PropertyWatcher - v0.3.1 - http://github.com/guitarfreak/PropertyWatcher
+	PropertyWatcher - v0.3.2 - http://github.com/guitarfreak/PropertyWatcher
 	by Roy Thieme
 
 	INFO:
@@ -96,14 +96,10 @@ namespace PropertyWatcher {
 		UStruct* StructPtr = 0; // Top level structs use this as UScriptStruct and Functions as UFunction
 		FString NameIDOverwrite = ""; // Optional
 
-		// Awkward, but we wan't the ability to display array members as [0] - <ObjectName> for example.
-		// But we can't use PointerType::Array for that, because that's set to Property.
-		bool IsArrayMember = false;
-
 		bool IsValid() { return !(Ptr == 0 && Prop == 0); };
 		FString GetName();
 		FString GetAuthoredName() { return !NameOverwrite.IsEmpty() ? NameOverwrite : GetName(); }
-		FString GetDisplayName();
+		FString GetDisplayName(); // Unused.
 		bool IsExpandable();
 		FString GetPropertyType();
 		FString GetCPPType();
@@ -247,6 +243,7 @@ namespace PropertyWatcher {
 
 		bool EnableClassCategoriesOnObjectItems;
 		bool ListFunctionsOnObjectItems;
+		bool ShowObjectNamesOnAllProperties;
 
 		// Temp options that get set by items
 
