@@ -1,5 +1,5 @@
 /*
-	PropertyWatcher - v0.3.2 - http://github.com/guitarfreak/PropertyWatcher
+	PropertyWatcher - v0.3.3 - http://github.com/guitarfreak/PropertyWatcher
 	by Roy Thieme
 
 	INFO:
@@ -70,9 +70,11 @@
 		See end of file for license information.
 */
 
-#pragma once
+#ifndef PROPERTY_WATCHER_H_INCLUDE
+#define PROPERTY_WATCHER_H_INCLUDE
 
 #if !UE_SERVER
+
 #include "imgui.h"
 
 namespace PropertyWatcher {
@@ -141,6 +143,7 @@ namespace PropertyWatcher {
 }
 
 #ifdef PROPERTY_WATCHER_INTERNAL
+#undef PROPERTY_WATCHER_INTERNAL
 
 namespace PropertyWatcher {
 	struct SimpleSearchParser {
@@ -164,6 +167,7 @@ namespace PropertyWatcher {
 			FString Ident;
 			FName Column;
 			Modifier Mod;
+			int ColumnID; // Helper, gets set later.
 		};
 
 		enum CommandType {
@@ -180,7 +184,7 @@ namespace PropertyWatcher {
 			// For debugging.
 			FString ToString() {
 				if (Type == Command_Test) {
-					FString s = Tst.Column.ToString() + ": " + Tst.Ident;
+					FString s = FString::Printf(TEXT("%d"), Tst.ColumnID) + ": " + Tst.Ident; // @ToDo: Add Column name instead of ID.
 					if (Tst.Mod) {
 						if (Tst.Mod == Mod_Exact) s += "[Exact]";
 						else if (Tst.Mod == Mod_Regex) s += "[Regex]";
@@ -203,7 +207,7 @@ namespace PropertyWatcher {
 		TArray<Command> Commands;
 
 		void ParseExpression(FString SearchString, TArray<FString> _Columns);
-		bool ApplyTests(TMap<FName, FString>& ColumnTexts);
+		bool ApplyTests(TMap<int, FString>& ColumnTexts);
 	};
 
 	//
@@ -286,7 +290,7 @@ namespace PropertyWatcher {
 
 	void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentPath, int StackIndex = 0);
 	void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex);
-	FString GetColumnCellText(TreeState& State, PropertyItem& Item, FName ColumnName, TArray<FString>* CurrentMemberPath = 0, int* StackIndex = 0);
+	FString GetColumnCellText(PropertyItem& Item, int ColumnID, TreeState* State = 0, TArray<FString>* CurrentMemberPath = 0, int* StackIndex = 0);
 	FString GetValueStringFromItem(PropertyItem& Item);
 	void DrawPropertyValue(PropertyItem& Item);
 
@@ -314,7 +318,23 @@ namespace PropertyWatcher {
 		bool ItemIsInlined;
 	};
 
+	enum ColumnID {
+		ColumnID_Name = 0,
+		ColumnID_Value,
+		ColumnID_Metadata,
+		ColumnID_Type,
+		ColumnID_Cpptype,
+		ColumnID_Class,
+		ColumnID_Category,
+		ColumnID_Address,
+		ColumnID_Size,
+		ColumnID_Remove,
+
+		ColumnID_MAX_SIZE,
+	};
+
 	struct ColumnInfo {
+		int ID;
 		FString Name;
 		FString DisplayName;
 		int Flags;
@@ -324,10 +344,11 @@ namespace PropertyWatcher {
 	struct ColumnInfos {
 		TArray<ColumnInfo> Infos;
 
-		ColumnInfo& GetByName(FString _Name) {
+		ColumnInfo* GetByName(FString _Name) {
 			for (int i = 0; i < Infos.Num() - 1; i++)
 				if (Infos[i].Name == _Name)
-					return Infos[i];
+					return &Infos[i];
+			return 0;
 		}
 		int GetIndexByName(FString _Name) {
 			for (int i = 0; i < Infos.Num() - 1; i++)
@@ -399,25 +420,14 @@ namespace PropertyWatcher {
 
 	//
 
-	#define Ansi(ws) StringCast<char>(ws).Get()
-	#define ArrayCount(array) (sizeof(array) / sizeof((array)[0]))
-		extern const char* SearchBoxHelpText;
-		extern const char* HelpText;
-
-	#if !defined defer	
-		struct defer_dummy {};
-		template <class T> struct deferrer {
-			T f;
-			deferrer(T f) : f(f) {}
-			~deferrer() { f(); }
-		};
-		template <class T> deferrer<T> operator*(defer_dummy, T f) { return { f }; }
-	#define DEFER_(LINE) zz_defer##LINE	
-	#define DEFER(LINE) DEFER_(LINE)	
-	#define defer auto DEFER(__LINE__) = defer_dummy{} *[&]()
-	#endif	
+	extern const char* SearchBoxHelpText;
+	extern const char* HelpText;
 
 	#define ImGui_StoA(ws) StringCast<char>(ws).Get()
+	#define ArrayCount(array) (sizeof(array) / sizeof((array)[0]))
+	#ifndef defer
+	#define defer ON_SCOPE_EXIT
+	#endif
 
 	namespace ImGuiAddon {
 		bool InputText(const char* label, TArray<char>& str, ImGuiInputTextFlags flags = 0, ::ImGuiInputTextCallback callback = NULL, void* user_data = NULL);
@@ -430,9 +440,9 @@ namespace PropertyWatcher {
 	}
 }
 
-#endif
-
-#endif
+#endif // PROPERTY_WATCHER_INTERNAL
+#endif // UE_SERVER
+#endif // PROPERTY_WATCHER_H_INCLUDE
 
 /*
 	MIT License

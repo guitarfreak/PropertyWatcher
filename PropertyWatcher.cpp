@@ -98,13 +98,13 @@
 		- Remember opened tree nodes between restarts.
 		- Add filter mode that hides everything.
 		- Look at performance.
+		- Actor list should clear on restart because pointers will be invalid. Should stop using statics.
 */
 
 #if !UE_SERVER
 
 #define PROPERTY_WATCHER_INTERNAL
 #include "PropertyWatcher.h"
-#undef PROPERTY_WATCHER_INTERNAL
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -120,6 +120,10 @@
 #include "Misc/ExpressionParser.h"
 #include "Internationalization/Regex.h"
 
+// Switch on to turn on unreal insights events for performance tests.
+#define SCOPE_EVENT(name) 
+//#define SCOPE_EVENT(name) SCOPED_NAMED_EVENT_TEXT(name, FColor::Orange);
+
 #if WITH_EDITORONLY_DATA
 #define MetaData_Available true
 #else 
@@ -132,7 +136,9 @@ void ObjectsTab(bool DrawControls, TArray<PropertyItemCategory>& CategoryItems, 
 void ActorsTab(bool DrawControls, UWorld* World, TreeState* State = 0, ColumnInfos* ColInfos = 0);
 void WatchTab(bool DrawControls, TArray<MemberPath>&WatchedMembers, bool* WantsToSave, bool* WantsToLoad, TArray<PropertyItemCategory>&CategoryItems, TreeState * State = 0);
 
-void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TArray<MemberPath>& WatchedMembers, UWorld* World, bool* IsOpen, bool* WantsToSave, bool* WantsToLoad) {
+void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TArray<MemberPath>& WatchedMembers, UWorld* World, bool* IsOpen, bool* WantsToSave, bool* WantsToLoad) {
+	SCOPE_EVENT("PropertyWatcher::Update");
+
 	*WantsToSave = false;
 	*WantsToLoad = false;
 
@@ -143,7 +149,7 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 	double StartTime = FPlatformTime::Seconds();
 
 	ImGui::SetNextWindowSize(ImVec2(430, 450), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin(Ansi(*("Property Watcher: " + WindowName)), IsOpen, ImGuiWindowFlags_MenuBar)) { ImGui::End(); return; }
+	if (!ImGui::Begin(ImGui_StoA(*("Property Watcher: " + WindowName)), IsOpen, ImGuiWindowFlags_MenuBar)) { ImGui::End(); return; }
 
 	static ImVec2 FramePadding = ImVec2(ImGui::GetStyle().FramePadding.x, 2);
 	static bool ShowObjectNamesOnAllProperties = true;
@@ -176,16 +182,16 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 	{
 		int FlagNoSort = ImGuiTableColumnFlags_NoSort;
 		int FlagDefault = ImGuiTableColumnFlags_WidthStretch;
-		ColInfos.Infos.Add({ "name",     "Property Name",  FlagDefault | ImGuiTableColumnFlags_NoHide });
-		ColInfos.Infos.Add({ "value",    "Property Value", FlagDefault | FlagNoSort });
-		ColInfos.Infos.Add({ "metadata", "Metadata",       FlagNoSort | ImGuiTableColumnFlags_DefaultHide | ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("(?)").x });
-		ColInfos.Infos.Add({ "type",     "Property Type",  FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
-		ColInfos.Infos.Add({ "cpptype",  "CPP Type",       FlagDefault });
-		ColInfos.Infos.Add({ "class",    "Owner Class",    FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
-		ColInfos.Infos.Add({ "category", "Category",       FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
-		ColInfos.Infos.Add({ "address",  "Adress",         FlagDefault | ImGuiTableColumnFlags_DefaultHide });
-		ColInfos.Infos.Add({ "size",     "Size",           FlagDefault | ImGuiTableColumnFlags_DefaultHide });
-		ColInfos.Infos.Add({ "",         "Remove",         ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() });
+		ColInfos.Infos.Add({ ColumnID_Name,     "name",     "Property Name",  FlagDefault | ImGuiTableColumnFlags_NoHide });
+		ColInfos.Infos.Add({ ColumnID_Value,    "value",    "Property Value", FlagDefault | FlagNoSort });
+		ColInfos.Infos.Add({ ColumnID_Metadata, "metadata", "Metadata",       FlagNoSort | ImGuiTableColumnFlags_DefaultHide | ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("(?)").x });
+		ColInfos.Infos.Add({ ColumnID_Type,     "type",     "Property Type",  FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ ColumnID_Cpptype,  "cpptype",  "CPP Type",       FlagDefault });
+		ColInfos.Infos.Add({ ColumnID_Class,    "class",    "Owner Class",    FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ ColumnID_Category, "category", "Category",       FlagDefault | FlagNoSort | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ ColumnID_Address,  "address",  "Adress",         FlagDefault | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ ColumnID_Size,     "size",     "Size",           FlagDefault | ImGuiTableColumnFlags_DefaultHide });
+		ColInfos.Infos.Add({ ColumnID_Remove,   "",         "Remove",         ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() });
 	}
 
 	// Top region.
@@ -213,7 +219,7 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 			FString Text = SearchBoxHelpText;
 			Text.Append("\nCurrent keywords for columns are: \n\t");
 			Text.Append(FString::Join(ColInfos.GetSearchNameArray(), *FString(", ")));
-			ImGui::Text(Ansi(*Text));
+			ImGui::Text(ImGui_StoA(*Text));
 		}
 		ImGui::SameLine();
 		ImGui::Checkbox("Filter", &SearchFilterActive);
@@ -226,7 +232,15 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 		ImGuiAddon::QuickTooltip("Show functions in actor items.");
 		ImGui::Spacing();
 
+		auto SearchNameArray = ColInfos.GetSearchNameArray();
 		SearchParser.ParseExpression(SearchString, ColInfos.GetSearchNameArray());
+		for (auto& Command : SearchParser.Commands) {
+			if (Command.Type == SimpleSearchParser::Command_Test) {
+				int Pos = SearchNameArray.Find(Command.Tst.Column.ToString());
+				if (Pos != INDEX_NONE)
+					Command.Tst.ColumnID = Pos;
+			}
+		}
 	}
 
 	// Tabs.
@@ -241,7 +255,7 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 
 		static TArray<FString> Tabs = { "Objects", "Actors", "Watch" };
 		for (auto CurrentTab : Tabs) {
-			if (ImGui::BeginTabItem(Ansi(*CurrentTab))) {
+			if (ImGui::BeginTabItem(ImGui_StoA(*CurrentTab))) {
 				defer{ ImGui::EndTabItem(); };
 
 				if (CurrentTab == "Watch")
@@ -268,7 +282,7 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 						int Flags = It.Flags;
 						if (It.DisplayName == "Remove" && CurrentTab != "Watch")
 							Flags |= ImGuiTableColumnFlags_Disabled;
-						ImGui::TableSetupColumn(Ansi(*It.DisplayName), Flags, It.InitWidth, i);
+						ImGui::TableSetupColumn(ImGui_StoA(*It.DisplayName), Flags, It.InitWidth, i);
 					}
 					ImGui::TableHeadersRow();
 					
@@ -348,6 +362,8 @@ void PropertyWatcher::Update(FString WindowName, TArray<PropertyItemCategory>& C
 }
 
 void ObjectsTab(bool DrawControls, TArray<PropertyItemCategory>& CategoryItems, TreeState* State) {
+	SCOPE_EVENT("PropertyWatcher::ObjectsTab");
+
 	if (DrawControls) {
 		return;
 	}
@@ -390,9 +406,9 @@ void ActorsTab(bool DrawControls, UWorld* World, TreeState* State, ColumnInfos* 
 			return;
 
 		if (World->GetCurrentLevel()) {
-			ImGui::Text("Current World: %s, ", Ansi(*World->GetName()));
+			ImGui::Text("Current World: %s, ", ImGui_StoA(*World->GetName()));
 			ImGui::SameLine();
-			ImGui::Text("Current Level: %s", Ansi(*World->GetCurrentLevel()->GetName()));
+			ImGui::Text("Current Level: %s", ImGui_StoA(*World->GetCurrentLevel()->GetName()));
 			ImGui::Spacing();
 		}
 
@@ -421,7 +437,7 @@ void ActorsTab(bool DrawControls, UWorld* World, TreeState* State, ColumnInfos* 
 			if (ImGui::BeginPopup("SetChannelsPopup")) {
 				for (int i = 0; i < CollisionChannelsActive.Num(); i++) {
 					FString Name = StaticEnum<ECollisionChannel>()->GetNameStringByIndex(i);
-					ImGui::Selectable(Ansi(*Name), &CollisionChannelsActive[i], ImGuiSelectableFlags_DontClosePopups);
+					ImGui::Selectable(ImGui_StoA(*Name), &CollisionChannelsActive[i], ImGuiSelectableFlags_DontClosePopups);
 				}
 
 				ImGui::Separator();
@@ -516,23 +532,19 @@ void ActorsTab(bool DrawControls, UWorld* World, TreeState* State, ColumnInfos* 
 	// Sorting.
 	{
 		static ImGuiTableSortSpecs* s_current_sort_specs = NULL;
-		static const int NameID    = ColInfos->GetIndexByName("name");
-		static const int CPPTypeID = ColInfos->GetIndexByName("cpptype");
-		static const int AddressID = ColInfos->GetIndexByName("address");
-		static const int SizeID    = ColInfos->GetIndexByName("size");
-
 		auto SortFun = [](const void* lhs, const void* rhs) -> int {
 			PropertyItem* a = (PropertyItem*)lhs;
 			PropertyItem* b = (PropertyItem*)rhs;
 			for (int n = 0; n < s_current_sort_specs->SpecsCount; n++) {
 				const ImGuiTableColumnSortSpecs* sort_spec = &s_current_sort_specs->Specs[n];
 				int delta = 0;
-				if      (sort_spec->ColumnUserID == NameID)    delta = (strcmp(Ansi(*((UObject*)a->Ptr)->GetName()), Ansi(*((UObject*)b->Ptr)->GetName())));
-				else if (sort_spec->ColumnUserID == CPPTypeID) delta = (strcmp(Ansi(*a->GetCPPType()), Ansi(*b->GetCPPType())));
-				else if (sort_spec->ColumnUserID == AddressID) delta = ((int64)a->Ptr - (int64)b->Ptr);
-				else if (sort_spec->ColumnUserID == SizeID)    delta = (a->GetSize() - b->GetSize());
-				else IM_ASSERT(0);
-
+				switch (sort_spec->ColumnUserID) {
+					case ColumnID_Name:    delta = (strcmp(ImGui_StoA(*((UObject*)a->Ptr)->GetName()), ImGui_StoA(*((UObject*)b->Ptr)->GetName())));
+					case ColumnID_Cpptype: delta = (strcmp(ImGui_StoA(*a->GetCPPType()), ImGui_StoA(*b->GetCPPType())));
+					case ColumnID_Address: delta = ((int64)a->Ptr - (int64)b->Ptr);
+					case ColumnID_Size:    delta = (a->GetSize() - b->GetSize());
+					default: IM_ASSERT(0);
+				}
 				if (delta > 0)
 					return (sort_spec->SortDirection == ImGuiSortDirection_Ascending) ? +1 : -1;
 				if (delta < 0)
@@ -617,28 +629,35 @@ void WatchTab(bool DrawControls, TArray<MemberPath>& WatchedMembers, bool* Wants
 
 //
 
-void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex) {
+void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex) {
+	SCOPE_EVENT("PropertyWatcher::DrawItemRow");
+
 	if (State.ItemDrawCount > 100000) // @Todo: Random safety measure against infinite recursion, do better.
 		return;
 
-	TMap<FName, FString> ColumnTexts;
-	bool ItemIsSearched;
+	TMap<int, FString> ColumnTexts;
+	bool ItemIsSearched = false;
 	{
-		ColumnTexts.Add("name", GetColumnCellText(State, Item, "name", &CurrentMemberPath, &StackIndex)); // Default.
+		SCOPE_EVENT("PropertyWatcher::DrawItemRow::ColumnTexts");
+
+		ColumnTexts.Add(ColumnID_Name, GetColumnCellText(Item, ColumnID_Name, &State, &CurrentMemberPath, &StackIndex)); // Default.
 
 		// Cache the cell texts that we need for the text search.
 		for (auto Command : State.SearchParser.Commands)
-			if (Command.Type == SimpleSearchParser::Command_Test && !ColumnTexts.Find(Command.Tst.Column))
-				ColumnTexts.Add(Command.Tst.Column, GetColumnCellText(State, Item, Command.Tst.Column, &CurrentMemberPath, &StackIndex));
+			if (Command.Type == SimpleSearchParser::Command_Test && !ColumnTexts.Find(Command.Tst.ColumnID))
+				ColumnTexts.Add(Command.Tst.ColumnID, GetColumnCellText(Item, Command.Tst.ColumnID, &State, &CurrentMemberPath, &StackIndex));
 
-		ItemIsSearched = State.SearchParser.ApplyTests(ColumnTexts);
+		if (State.SearchParser.Commands.Num())
+			ItemIsSearched = State.SearchParser.ApplyTests(ColumnTexts);
+		else
+			ItemIsSearched = false;
 	}
 
-	auto FindOrGetColumnText = [&State, &Item, &ColumnTexts, &CurrentMemberPath, &StackIndex](FName ColumnName) -> FString {
-		if (const FString* Result = ColumnTexts.Find(ColumnName))
+	auto FindOrGetColumnText = [&State, &Item, &ColumnTexts, &CurrentMemberPath, &StackIndex](int ColumnID) -> FString {
+		if (const FString* Result = ColumnTexts.Find(ColumnID))
 			return *Result;
 		else
-			return GetColumnCellText(State, Item, ColumnName);
+			return GetColumnCellText(Item, ColumnID, &State);
 	};
 
 	// Item is skipped.
@@ -654,11 +673,11 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 		if (!Item.NameIDOverwrite.IsEmpty())
 			// Usefull if you want to add an object to the object table, that 
 			// has an unstable pointer and name. Not used anywhere else yet.
-			ImGui::PushID(Ansi(*Item.NameIDOverwrite));
+			ImGui::PushID(ImGui_StoA(*Item.NameIDOverwrite));
 		else
 			ImGui::PushID(Item.Ptr);
 	} else
-		ImGui::PushID(Ansi(*Item.GetAuthoredName()));
+		ImGui::PushID(ImGui_StoA(*Item.GetAuthoredName()));
 
 	TreeNodeState NodeState;
 
@@ -672,6 +691,8 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 	// @Column(name): Property name
 	bool IsNameNodeVisible = true;
 	{
+		SCOPE_EVENT("PropertyWatcher::DrawItemRow::NodeLogic");
+
 		if (!Item.IsValid()) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 		defer{ if (!Item.IsValid()) ImGui::PopStyleColor(1); };
 
@@ -685,7 +706,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 				NodeState.TextColor = ImVec4(1, 0.5f, 0, 1);
 			}
 
-			BeginTreeNode("##Object", FindOrGetColumnText("name"), NodeState, State, StackIndex, 0);
+			BeginTreeNode("##Object", FindOrGetColumnText(ColumnID_Name), NodeState, State, StackIndex, 0);
 			IsNameNodeVisible = ImGui::IsItemVisible();
 		}
 
@@ -727,7 +748,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 		if (StackIndex > 0 && Item.Type != PointerType::Function) {
 			if (ImGui::BeginDragDropSource()) {
 				FString PathString = FString::Join(CurrentMemberPath, TEXT("."));
-				const char* String = Ansi(*PathString);
+				const char* String = ImGui_StoA(*PathString);
 				ImGui::SetDragDropPayload("PropertyWatcherMember", String, PathString.Len() + 1);
 
 				ImGui::Text("Add to watch list:");
@@ -765,8 +786,8 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 
 				static TArray<char> StringBuffer;
 				StringBuffer.Empty();
-				StringBuffer.Append(Ansi(**State.PathStringPtr), State.PathStringPtr->Len() + 1);
-				if (ImGuiAddon::InputText(Ansi(*StringID), StringBuffer, ImGuiInputTextFlags_EnterReturnsTrue))
+				StringBuffer.Append(ImGui_StoA(**State.PathStringPtr), State.PathStringPtr->Len() + 1);
+				if (ImGuiAddon::InputText(ImGui_StoA(*StringID), StringBuffer, ImGuiInputTextFlags_EnterReturnsTrue))
 					(*State.PathStringPtr) = FString(StringBuffer);
 			}
 		}
@@ -781,7 +802,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 			if (Item.Type == PointerType::Property && CastField<FObjectProperty>(Item.Prop) && Item.Ptr) {
 				ImGui::SameLine();
 				ImGui::BeginDisabled();
-				ImGui::Text(Ansi(*FString::Printf(TEXT("(%s)"), *((UObject*)Item.Ptr)->GetName())));
+				ImGui::Text(ImGui_StoA(*FString::Printf(TEXT("(%s)"), *((UObject*)Item.Ptr)->GetName())));
 				ImGui::EndDisabled();
 			}
 		}
@@ -802,7 +823,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 
 		// @Column(metadata): Metadata							
 		if (ImGui::TableNextColumn() && Item.Prop) {
-			FString MetaDataText = FindOrGetColumnText("metadata");
+			FString MetaDataText = FindOrGetColumnText(ColumnID_Metadata);
 			if (MetaDataText.Len()) {
 				ImGui::TextDisabled("(?)");
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -810,7 +831,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 
 					if (MetaData_Available)
-						ImGui::TextUnformatted(Ansi(*MetaDataText));
+						ImGui::TextUnformatted(ImGui_StoA(*MetaDataText));
 					else
 						ImGui::TextUnformatted("Data not available in shipping builds.");
 
@@ -831,28 +852,28 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 					ImGui::Bullet();
 				}
 				ImGui::SameLine();
-				ImGui::Text(Ansi(*FindOrGetColumnText("type")));
+				ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Type)));
 			}
 		}
 
 		// @Column(cpptype): CPP Type
 		if (ImGui::TableNextColumn())
-			ImGui::Text(Ansi(*FindOrGetColumnText("cpptype")));
+			ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Cpptype)));
 
 		// @Column(class): Owner Class
 		if (ImGui::TableNextColumn())
-			ImGui::Text(Ansi(*FindOrGetColumnText("class")));
+			ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Class)));
 
 		// @Column(category): Metadata Category
 		if (ImGui::TableNextColumn())
-			ImGui::Text(Ansi(*FindOrGetColumnText("category")));
+			ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Category)));
 
 		// @Column(address): Adress
 		if (ImGui::TableNextColumn()) {
 			if (State.DrawHoveredAddress && Item.Ptr == State.HoveredAddress)
-				ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), Ansi(*FindOrGetColumnText("address")));
+				ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), ImGui_StoA(*FindOrGetColumnText(ColumnID_Address)));
 			else
-				ImGui::Text(Ansi(*FindOrGetColumnText("address")));
+				ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Address)));
 
 			if (ImGui::IsItemHovered()) {
 				State.AddressWasHovered = true;
@@ -862,7 +883,7 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 
 		// @Column(size): Size
 		if (ImGui::TableNextColumn())
-			ImGui::Text(Ansi(*FindOrGetColumnText("size")));
+			ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Size)));
 
 		// Close Button
 		if (ImGui::TableNextColumn())
@@ -884,7 +905,9 @@ void PropertyWatcher::DrawItemRow(TreeState& State, PropertyItem Item, TArray<FS
 	}
 }
 
-void PropertyWatcher::DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex) {
+void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex) {
+	SCOPE_EVENT("PropertyWatcher::DrawItemChildren");
+
 	check(Item.Ptr); // Do we need this check here? Can't remember.
 
 	if (Item.Prop &&
@@ -980,18 +1003,20 @@ void PropertyWatcher::DrawItemChildren(TreeState& State, PropertyItem Item, TArr
 	}
 }
 
-FString PropertyWatcher::GetColumnCellText(TreeState& State, PropertyItem& Item, FName ColumnName, TArray<FString>* CurrentMemberPath, int* StackIndex) {
+FString GetColumnCellText(PropertyItem& Item, int ColumnID, TreeState* State, TArray<FString>* CurrentMemberPath, int* StackIndex) {
+	SCOPE_EVENT("PropertyWatcher::GetColumnCellText");
+
 	FString Result = "";
-	if (ColumnName == "name") {
+	if (ColumnID == ColumnID_Name) {
 		if (CurrentMemberPath && StackIndex) {
-			bool TopLevelWatchListItem = State.CurrentWatchItemIndex != -1 && (*StackIndex) == 0;
-			bool PathIsEditable = TopLevelWatchListItem && State.PathStringPtr;
+			bool TopLevelWatchListItem = State->CurrentWatchItemIndex != -1 && (*StackIndex) == 0;
+			bool PathIsEditable = TopLevelWatchListItem && State->PathStringPtr;
 
 			if (!PathIsEditable) {
-				if (State.ForceInlineChildItems) {
+				if (State->ForceInlineChildItems) {
 					FString StrName = Item.GetAuthoredName();
 					TArray<FString> InlinedMemberPath = *CurrentMemberPath;
-					for (int i = 0; i < State.InlineMemberPathIndexOffset; i++) {
+					for (int i = 0; i < State->InlineMemberPathIndexOffset; i++) {
 						if (InlinedMemberPath.Num())
 							InlinedMemberPath.RemoveAt(0);
 					}
@@ -1002,10 +1027,10 @@ FString PropertyWatcher::GetColumnCellText(TreeState& State, PropertyItem& Item,
 			}
 		}
 
-	} else if (ColumnName == "value") {
+	} else if (ColumnID == ColumnID_Value) {
 		Result = GetValueStringFromItem(Item);
 
-	} else if (ColumnName == "metadata" && Item.Prop) {
+	} else if (ColumnID == ColumnID_Metadata && Item.Prop) {
 #if MetaData_Available
 		if (const TMap<FName, FString>* MetaData = Item.Prop->GetMetaDataMap()) {
 			TArray<FName> Keys;
@@ -1022,13 +1047,13 @@ FString PropertyWatcher::GetColumnCellText(TreeState& State, PropertyItem& Item,
 		}
 #endif
 
-	} else if (ColumnName == "type") {
+	} else if (ColumnID == ColumnID_Type) {
 		Result = Item.GetPropertyType();
 
-	} else if (ColumnName == "cpptype") {
+	} else if (ColumnID == ColumnID_Cpptype) {
 		Result = Item.GetCPPType();
 
-	} else if (ColumnName == "class") {
+	} else if (ColumnID == ColumnID_Class) {
 		if (Item.Prop) {
 			FFieldVariant Owner = ((FField*)Item.Prop)->Owner;
 			Result = Owner.GetName();
@@ -1039,13 +1064,13 @@ FString PropertyWatcher::GetColumnCellText(TreeState& State, PropertyItem& Item,
 				Result = Class->GetName();
 		}
 
-	} else if (ColumnName == "category") {
+	} else if (ColumnID == ColumnID_Category) {
 		Result = GetItemMetadataCategory(Item);
 
-	} else if (ColumnName == "address") {
+	} else if (ColumnID == ColumnID_Address) {
 		Result = FString::Printf(TEXT("%p"), Item.Ptr);
 
-	} else if (ColumnName == "size") {
+	} else if (ColumnID == ColumnID_Size) {
 		int Size = Item.GetSize();
 		if (Size != -1)
 			Result = FString::Printf(TEXT("%d B"), Size);
@@ -1054,7 +1079,9 @@ FString PropertyWatcher::GetColumnCellText(TreeState& State, PropertyItem& Item,
 	return Result;
 }
 
-FString PropertyWatcher::GetValueStringFromItem(PropertyItem& Item) {
+FString GetValueStringFromItem(PropertyItem& Item) {
+	SCOPE_EVENT("PropertyWatcher::GetValueStringFromItem");
+
 	// Maybe we could just serialize the property to string?
 	// Since we don't handle that many types for now we can just do it by hand.
 	FString Result;
@@ -1083,7 +1110,9 @@ FString PropertyWatcher::GetValueStringFromItem(PropertyItem& Item) {
 	return Result;
 }
 
-void PropertyWatcher::DrawPropertyValue(PropertyItem& Item) {
+void DrawPropertyValue(PropertyItem& Item) {
+	SCOPE_EVENT("PropertyWatcher::DrawPropertyValue");
+
 	static TArray<char> StringBuffer;
 	static int IntStep = 1;
 	static int IntStepFast8 = 10;
@@ -1103,7 +1132,7 @@ void PropertyWatcher::DrawPropertyValue(PropertyItem& Item) {
 
 	} else if (FClassProperty* ClassProp = CastField<FClassProperty>(Item.Prop)) {
 		UClass* Class = (UClass*)Item.Ptr;
-		ImGui::Text(Ansi(*Class->GetAuthoredName()));
+		ImGui::Text(ImGui_StoA(*Class->GetAuthoredName()));
 
 	} else if (FClassPtrProperty* ClassPtrProp = CastField<FClassPtrProperty>(Item.Prop)) {
 		ImGui::Text("<Not Implemented>");
@@ -1185,7 +1214,7 @@ void PropertyWatcher::DrawPropertyValue(PropertyItem& Item) {
 			StringBuffer.Empty();
 			for (int i = 0; i < Count; i++) {
 				FString Name = Enum->GetNameStringByIndex(i);
-				StringBuffer.Append(Ansi(*Name), Name.Len());
+				StringBuffer.Append(ImGui_StoA(*Name), Name.Len());
 				StringBuffer.Push('\0');
 			}
 			StringBuffer.Push('\0');
@@ -1248,15 +1277,15 @@ void PropertyWatcher::DrawPropertyValue(PropertyItem& Item) {
 	} else if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Item.Prop)) {
 		FProperty* CurrentProp = ArrayProp->Inner;
 		FScriptArrayHelper ScriptArrayHelper(ArrayProp, Item.Ptr);
-		ImGui::Text("%s [%d]", Ansi(*CurrentProp->GetCPPType()), ScriptArrayHelper.Num());
+		ImGui::Text("%s [%d]", ImGui_StoA(*CurrentProp->GetCPPType()), ScriptArrayHelper.Num());
 
 	} else if (FMapProperty* MapProp = CastField<FMapProperty>(Item.Prop)) {
 		FScriptMapHelper Helper = FScriptMapHelper(MapProp, Item.Ptr);
-		ImGui::Text("<%s, %s> (%d)", Ansi(*MapProp->KeyProp->GetCPPType()), Ansi(*MapProp->ValueProp->GetCPPType()), Helper.Num());
+		ImGui::Text("<%s, %s> (%d)", ImGui_StoA(*MapProp->KeyProp->GetCPPType()), ImGui_StoA(*MapProp->ValueProp->GetCPPType()), Helper.Num());
 
 	} else if (FSetProperty* SetProp = CastField<FSetProperty>(Item.Prop)) {
 		FScriptSetHelper Helper = FScriptSetHelper(SetProp, Item.Ptr);
-		ImGui::Text("<%s> {%d}", Ansi(*Helper.GetElementProperty()->GetCPPType()), Helper.Num());
+		ImGui::Text("<%s> {%d}", ImGui_StoA(*Helper.GetElementProperty()->GetCPPType()), Helper.Num());
 
 	} else if (FMulticastDelegateProperty* MultiDelegateProp = CastField<FMulticastDelegateProperty>(Item.Prop)) {
 		auto ScriptDelegate = (TMulticastScriptDelegate<FWeakObjectPtr>*)Item.Ptr;
@@ -1278,7 +1307,7 @@ void PropertyWatcher::DrawPropertyValue(PropertyItem& Item) {
 		FString Text;
 		if (ScriptDelegate->IsBound()) Text = ScriptDelegate->GetFunctionName().ToString();
 		else                           Text = "<No Function Bound>";
-		ImGui::Text(Ansi(*Text));
+		ImGui::Text(ImGui_StoA(*Text));
 
 	} else if (FMulticastInlineDelegateProperty* MultiInlineDelegateProp = CastField<FMulticastInlineDelegateProperty>(Item.Prop)) {
 		ImGui::Text("<NotImplemented>"); // @Todo
@@ -1338,7 +1367,9 @@ void PropertyWatcher::DrawPropertyValue(PropertyItem& Item) {
 	}
 }
 
-bool PropertyWatcher::MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items) {
+bool MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items) {
+	SCOPE_EVENT("PropertyWatcher::UpdateItemFromPath");
+
 	// Name is the "path" to the member. You can traverse through objects, structs and arrays.
 	// E.g.: objectMember.<arrayIndex>.structMember.float/int/bool member
 
@@ -1418,7 +1449,7 @@ bool PropertyWatcher::MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items
 	return !SearchFailed;
 }
 
-FString PropertyWatcher::ConvertWatchedMembersToString(TArray<MemberPath>& WatchedMembers) {
+FString ConvertWatchedMembersToString(TArray<MemberPath>& WatchedMembers) {
 	TArray<FString> Strings;
 	for (auto It : WatchedMembers)
 		Strings.Push(It.PathString);
@@ -1427,7 +1458,7 @@ FString PropertyWatcher::ConvertWatchedMembersToString(TArray<MemberPath>& Watch
 	return Result;
 }
 
-void PropertyWatcher::LoadWatchedMembersFromString(FString Data, TArray<MemberPath>& WatchedMembers) {
+void LoadWatchedMembersFromString(FString Data, TArray<MemberPath>& WatchedMembers) {
 	WatchedMembers.Empty();
 
 	TArray<FString> Strings;
@@ -1560,6 +1591,8 @@ int PropertyItem::GetSize() {
 };
 
 int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
+	SCOPE_EVENT("PropertyWatcher::GetMembers");
+
 	if (!Ptr) return 0;
 
 	int Count = 0;
@@ -1665,7 +1698,7 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 	return Count;
 }
 
-void* PropertyWatcher::ContainerToValuePointer(PointerType Type, void* ContainerPtr, FProperty* MemberProp) {
+void* ContainerToValuePointer(PointerType Type, void* ContainerPtr, FProperty* MemberProp) {
 	switch (Type) {
 	case Object: {
 		if (FObjectProperty* ObjectProp = CastField<FObjectProperty>(MemberProp))
@@ -1690,28 +1723,28 @@ void* PropertyWatcher::ContainerToValuePointer(PointerType Type, void* Container
 	return 0;
 }
 
-PropertyItem PropertyWatcher::MakeObjectItem(void* _Ptr) {
+PropertyItem MakeObjectItem(void* _Ptr) {
 	return { PointerType::Object, _Ptr };
 }
-PropertyItem PropertyWatcher::MakeObjectItemNamed(void* _Ptr, FString _NameOverwrite, FString NameID) {
+PropertyItem MakeObjectItemNamed(void* _Ptr, FString _NameOverwrite, FString NameID) {
 	return { PointerType::Object, _Ptr, 0, _NameOverwrite, 0, NameID };
 }
-PropertyItem PropertyWatcher::MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index, bool IsObjectProp) {
+PropertyItem MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index, bool IsObjectProp) {
 	return { PointerType::Property, _Ptr, _Prop, FString::Printf(TEXT("[%d]"), _Index) };
 }
-PropertyItem PropertyWatcher::MakePropertyItem(void* _Ptr, FProperty* _Prop) {
+PropertyItem MakePropertyItem(void* _Ptr, FProperty* _Prop) {
 	return { PointerType::Property, _Ptr, _Prop };
 }
-PropertyItem PropertyWatcher::MakePropertyItemNamed(void* _Ptr, FProperty* _Prop, FString Name, FString NameID) {
+PropertyItem MakePropertyItemNamed(void* _Ptr, FProperty* _Prop, FString Name, FString NameID) {
 	return { PointerType::Property, _Ptr, _Prop, Name, 0, NameID };
 }
-PropertyItem PropertyWatcher::MakeFunctionItem(void* _Ptr, UFunction* _Function) {
+PropertyItem MakeFunctionItem(void* _Ptr, UFunction* _Function) {
 	return { PointerType::Function, _Ptr, 0, "", _Function };
 }
 
 // -------------------------------------------------------------------------------------------
 
-void PropertyWatcher::SetTableRowBackgroundByStackIndex(int StackIndex) {
+void SetTableRowBackgroundByStackIndex(int StackIndex) {
 	if (StackIndex == 0)
 		return;
 
@@ -1730,7 +1763,9 @@ int GetDigitKeyDownAsInt() {
 	return 0;
 }
 
-bool PropertyWatcher::BeginTreeNode(FString NameID, FString DisplayName, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags) {
+bool BeginTreeNode(FString NameID, FString DisplayName, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags) {
+	SCOPE_EVENT("PropertyWatcher::BeginTreeNode");
+
 	bool ItemIsInlined = State.ForceInlineChildItems && (StackIndex < State.InlineStackIndexLimit) && NodeState.HasBranches;
 
 	if (State.ForceInlineChildItems && State.VisitedPropertiesStack.ContainsByPredicate([&NodeState](auto It) { return It.Compare(NodeState.ItemInfo); }))
@@ -1738,7 +1773,7 @@ bool PropertyWatcher::BeginTreeNode(FString NameID, FString DisplayName, TreeNod
 
 	if (ItemIsInlined) {
 		NodeState.IsOpen = true;
-		ImGui::TreePush(Ansi(*NameID));
+		ImGui::TreePush(ImGui_StoA(*NameID));
 		ImGui::Unindent();
 		NodeState.ItemIsInlined = true;
 
@@ -1761,7 +1796,7 @@ bool PropertyWatcher::BeginTreeNode(FString NameID, FString DisplayName, TreeNod
 		// If force open mode is active we change the state of the node if needed.
 		if (State.ForceToggleNodeOpenClose && NodeState.HasBranches) {
 			auto StateStorage = ImGui::GetStateStorage();
-			auto ID = ImGui::GetID(Ansi(*NameID));
+			auto ID = ImGui::GetID(ImGui_StoA(*NameID));
 			bool IsOpen = (bool)StateStorage->GetInt(ID);
 
 			// Tree node state should change.
@@ -1791,8 +1826,10 @@ bool PropertyWatcher::BeginTreeNode(FString NameID, FString DisplayName, TreeNod
 			Flags |= NodeState.HasBranches ? ImGuiTreeNodeFlags_NavLeftJumpsBackHere : ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 			if (NodeState.OverrideNoTreePush)
 				Flags |= ImGuiTreeNodeFlags_NoTreePushOnOpen;
+			
+			SCOPE_EVENT("PropertyWatcher::TreeNodeEx");
 
-			bool Open = ImGui::TreeNodeEx(Ansi(*NameID), Flags, Ansi(*DisplayName));
+			bool Open = ImGui::TreeNodeEx(ImGui_StoA(*NameID), Flags, ImGui_StoA(*DisplayName));
 			if (NodeState.HasBranches)
 				NodeState.IsOpen = Open;
 		}
@@ -1810,7 +1847,7 @@ bool PropertyWatcher::BeginTreeNode(FString NameID, FString DisplayName, TreeNod
 		// The goal is to close everything that's visually open.
 		if (State.IsForceToggleNodeActive(StackIndex) && (NodeState.ActivatedForceToggleNodeOpenClose || NodeStateChanged) && !NodeState.IsOpen) {
 			if (!(Flags & ImGuiTreeNodeFlags_NoTreePushOnOpen))
-				ImGui::TreePush(Ansi(*NameID));
+				ImGui::TreePush(ImGui_StoA(*NameID));
 
 			NodeState.IsOpen = true;
 		}
@@ -1819,7 +1856,7 @@ bool PropertyWatcher::BeginTreeNode(FString NameID, FString DisplayName, TreeNod
 	return NodeState.IsOpen;
 }
 
-void PropertyWatcher::TreeNodeSetInline(TreeNodeState& NodeState, TreeState& State, int CurrentMemberPathLength, int StackIndex, bool Inline, int InlineStackDepth) {
+void TreeNodeSetInline(TreeNodeState& NodeState, TreeState& State, int CurrentMemberPathLength, int StackIndex, bool Inline, int InlineStackDepth) {
 	if (Inline && !State.ForceInlineChildItems) {
 		NodeState.InlineChildren = true;
 
@@ -1831,7 +1868,9 @@ void PropertyWatcher::TreeNodeSetInline(TreeNodeState& NodeState, TreeState& Sta
 	}
 }
 
-void PropertyWatcher::EndTreeNode(TreeNodeState& NodeState, TreeState& State) {
+void EndTreeNode(TreeNodeState& NodeState, TreeState& State) {
+	SCOPE_EVENT("PropertyWatcher::EndTreeNode");
+
 	if (NodeState.ItemIsInlined) {
 		ImGui::TreePop();
 		ImGui::Indent();
@@ -1846,7 +1885,9 @@ void PropertyWatcher::EndTreeNode(TreeNodeState& NodeState, TreeState& State) {
 		State.ForceInlineChildItems = false;
 }
 
-bool PropertyWatcher::BeginSection(FString Name, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags) {
+bool BeginSection(FString Name, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags) {
+	SCOPE_EVENT("PropertyWatcher::BeginSection");
+
 	bool NodeOpenCloseLogicIsEnabled = true;
 
 	NodeState.HasBranches = true;
@@ -1856,7 +1897,7 @@ bool PropertyWatcher::BeginSection(FString Name, TreeNodeState& NodeState, TreeS
 
 	ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(1, 1, 1, 0)); defer{ ImGui::PopStyleColor(1); };
 
-	const char* CharName = Ansi(*("(" + Name + ")"));
+	const char* CharName = ImGui_StoA(*("(" + Name + ")"));
 	ExtraFlags |= ImGuiTreeNodeFlags_Framed;
 	bool IsOpen = BeginTreeNode(CharName, CharName, NodeState, State, StackIndex, ExtraFlags);
 
@@ -1866,11 +1907,13 @@ bool PropertyWatcher::BeginSection(FString Name, TreeNodeState& NodeState, TreeS
 	return IsOpen;
 }
 
-void PropertyWatcher::EndSection(TreeNodeState& NodeState, TreeState& State) {
+void EndSection(TreeNodeState& NodeState, TreeState& State) {
+	SCOPE_EVENT("PropertyWatcher::EndSection");
+
 	EndTreeNode(NodeState, State);
 }
 
-TArray<FName> PropertyWatcher::GetClassFunctionList(UClass* Class) {
+TArray<FName> GetClassFunctionList(UClass* Class) {
 	TArray<FName> FunctionNames;
 
 #if WITH_EDITOR
@@ -1895,7 +1938,7 @@ TArray<FName> PropertyWatcher::GetClassFunctionList(UClass* Class) {
 	return FunctionNames;
 }
 
-TArray<UFunction*> PropertyWatcher::GetObjectFunctionList(UObject* Obj) {
+TArray<UFunction*> GetObjectFunctionList(UObject* Obj) {
 	TArray<UFunction*> Functions;
 
 	UClass* Class = Obj->GetClass();
@@ -1918,7 +1961,7 @@ TArray<UFunction*> PropertyWatcher::GetObjectFunctionList(UObject* Obj) {
 	return Functions;
 }
 
-FString PropertyWatcher::GetItemMetadataCategory(PropertyItem& Item) {
+FString GetItemMetadataCategory(PropertyItem& Item) {
 	FString Category = "";
 #if WITH_EDITORONLY_DATA											
 	if (Item.Prop) {
@@ -1931,7 +1974,7 @@ FString PropertyWatcher::GetItemMetadataCategory(PropertyItem& Item) {
 	return Category;
 }
 
-bool PropertyWatcher::GetItemColor(PropertyItem& Item, ImVec4& Color) {
+bool GetItemColor(PropertyItem& Item, ImVec4& Color) {
 	FLinearColor lColor = {};
 	lColor.R = -1;
 
@@ -1999,7 +2042,7 @@ bool PropertyWatcher::GetItemColor(PropertyItem& Item, ImVec4& Color) {
 	return false;
 }
 
-bool PropertyWatcher::GetObjFromObjPointerProp(PropertyItem& Item, UObject*& Object) {
+bool GetObjFromObjPointerProp(PropertyItem& Item, UObject*& Object) {
 	if (Item.Prop &&
 		(Item.Prop->IsA(FWeakObjectProperty::StaticClass()) ||
 			Item.Prop->IsA(FLazyObjectProperty::StaticClass()) ||
@@ -2028,6 +2071,8 @@ bool PropertyWatcher::GetObjFromObjPointerProp(PropertyItem& Item, UObject*& Obj
 // -------------------------------------------------------------------------------------------
 
 void SimpleSearchParser::ParseExpression(FString str, TArray<FString> _Columns) {
+	SCOPE_EVENT("PropertyWatcher::ParseExpression");
+
 	Commands.Empty();
 
 	struct StackInfo {
@@ -2130,17 +2175,19 @@ void SimpleSearchParser::ParseExpression(FString str, TArray<FString> _Columns) 
 			It.Tst.Column = "name";
 }
 
-bool SimpleSearchParser::ApplyTests(TMap<FName, FString>& ColumnTexts) {
+bool SimpleSearchParser::ApplyTests(TMap<int, FString>& ColumnTexts) {
+	SCOPE_EVENT("PropertyWatcher::ApplyTests");
+
 	TArray<bool> Bools;
 	for (auto Command : Commands) {
 		if (Command.Type == Command_Test) {
 			Test& Tst = Command.Tst;
-			FString* ColStr = ColumnTexts.Find(Tst.Column);
+			FString* ColStr = ColumnTexts.Find(Tst.ColumnID);
 			if (!ColStr)
 				continue;
 
 			bool Result;
-			if (!Tst.Mod)                     Result = ColStr->Contains(Tst.Ident);
+			if     (!Tst.Mod)                     Result = ColStr->Contains(Tst.Ident);
 			else if (Tst.Mod == Mod_Exact)        Result = ColStr->Equals(Tst.Ident, ESearchCase::IgnoreCase);
 			else if (Tst.Mod == Mod_Equal)        Result = FCString::Atod(**ColStr) == FCString::Atod(*Tst.Ident);
 			else if (Tst.Mod == Mod_Greater)      Result = FCString::Atod(**ColStr) > FCString::Atod(*Tst.Ident);
@@ -2244,14 +2291,14 @@ bool ImGuiAddon::InputStringWithHint(FString Label, FString Hint, FString& Strin
 void ImGuiAddon::QuickTooltip(FString TooltipText, ImGuiHoveredFlags Flags) {
 	if (ImGui::IsItemHovered(Flags)) {
 		ImGui::BeginTooltip(); defer{ ImGui::EndTooltip(); };
-		ImGui::Text(Ansi(*TooltipText));
+		ImGui::Text(ImGui_StoA(*TooltipText));
 	}
 }
 
 // -------------------------------------------------------------------------------------------
 
 // @Todo: Improve.
-const char* PropertyWatcher::SearchBoxHelpText =
+const char* SearchBoxHelpText =
 	"Multiple search terms can be entered.\n"
 	"\n"
 	"Operators are: \n"
@@ -2277,7 +2324,7 @@ const char* PropertyWatcher::SearchBoxHelpText =
 	;
 
 // @Todo: Improve.
-const char* PropertyWatcher::HelpText =
+const char* HelpText =
 	"Drag an item somewhere to add it to the watch list.\n"
 	"\n"
 	"Shift click on a node -> Open/Close all.\n"
@@ -2286,7 +2333,6 @@ const char* PropertyWatcher::HelpText =
 	"\n"
 	"Right click on an item to inline it.\n"
 	;
-
 }
 
-#endif
+#endif // UE_SERVER
