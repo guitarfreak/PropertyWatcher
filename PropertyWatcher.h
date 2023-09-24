@@ -1,5 +1,5 @@
 /*
-	PropertyWatcher - v0.3.3 - http://github.com/guitarfreak/PropertyWatcher
+	PropertyWatcher - v0.3.4 - http://github.com/guitarfreak/PropertyWatcher
 	by Roy Thieme
 
 	INFO:
@@ -18,7 +18,12 @@
 	
 		static bool PropertyWatcherIsOpen = true;
 		if (PropertyWatcherIsOpen) {
-			static bool PropertyWatcherInit = true;
+			// This should be set to true once at the beginning.
+			// It's not crucial to set it, but among other things it clears the internal actors array after a restart.
+			// If you looked up some actors in the actors tab and didn't clear them after a restart you will get a crash.
+			// This happens because internally we use static TArray<> which doesn't get cleared on a restart, only on the first compile.
+			bool PropertyWatcherInit = false;
+
 			static TArray<PropertyWatcher::MemberPath> WatchedMembers;
 
 			auto World = GetWorld();
@@ -46,7 +51,7 @@
 			TArray<PropertyWatcher::PropertyItemCategory> Objects = { CatA, CatB };
 
 			bool WantsToSave, WantsToLoad;
-			PropertyWatcher::Update("Actors", Objects, WatchedMembers, GetWorld(), &PropertyWatcherIsOpen, &WantsToSave, &WantsToLoad);
+			PropertyWatcher::Update("Actors", Objects, WatchedMembers, GetWorld(), &PropertyWatcherIsOpen, &WantsToSave, &WantsToLoad, PropertyWatcherInit);
 
 			if (PropertyWatcherInit)
 				WantsToLoad = true;
@@ -70,14 +75,42 @@
 		See end of file for license information.
 */
 
-#ifndef PROPERTY_WATCHER_H_INCLUDE
-#define PROPERTY_WATCHER_H_INCLUDE
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat"
+#endif
 
 #if !UE_SERVER
+
+#ifndef PROPERTY_WATCHER_H_INCLUDE
+#define PROPERTY_WATCHER_H_INCLUDE
 
 #include "imgui.h"
 
 namespace PropertyWatcher {
+	
+	// FAnsiStringView seems too verbose.
+	// This gets us closer to the size of "FString".
+	typedef FAnsiStringView FAView;
+
+	// Writing .GetData() everywhere looks unpleasant.
+	UE_NODISCARD FORCEINLINE const char* operator*(FAView a) { return a.GetData(); }
+
+	// These functions don't exist with a search case parameter for string views.
+	// So we have to add them ourselfs.
+	template <typename CharType>
+	inline int32 StringView_Find(TStringView<CharType>& View, TStringView<CharType> Search, ESearchCase::Type SearchCase = ESearchCase::Type::IgnoreCase, int32 StartPosition = 0) {
+		int32 Index = UE::String::FindFirst(View.RightChop(StartPosition), Search, SearchCase);
+		return Index == INDEX_NONE ? INDEX_NONE : Index + StartPosition;
+	}
+
+	template <typename CharType>
+	inline bool StringView_Contains(TStringView<CharType>& View, TStringView<CharType> Search, ESearchCase::Type SearchCase = ESearchCase::Type::IgnoreCase) {
+		return StringView_Find(View, Search, SearchCase) != INDEX_NONE;
+	}
+
+	//
+
 	enum PointerType {
 		Property = 0,
 		Object,
@@ -94,23 +127,26 @@ namespace PropertyWatcher {
 		PointerType Type = PointerType::Property;
 		void* Ptr = 0;
 		FProperty* Prop = 0;
-		FString NameOverwrite = "";
+		FAView NameOverwrite = "";
 		UStruct* StructPtr = 0; // Top level structs use this as UScriptStruct and Functions as UFunction
-		FString NameIDOverwrite = ""; // Optional
+		FAView NameIDOverwrite = ""; // Optional
+
+		int CachedMemberCount = -1;
 
 		bool IsValid() { return !(Ptr == 0 && Prop == 0); };
-		FString GetName();
-		FString GetAuthoredName() { return !NameOverwrite.IsEmpty() ? NameOverwrite : GetName(); }
-		FString GetDisplayName(); // Unused.
+		FName GetName();
+		FAView GetAuthoredName();
+		//FString GetDisplayName(); // Unused.
+
 		bool IsExpandable();
-		FString GetPropertyType();
-		FString GetCPPType();
+		FAView GetPropertyType();
+		FAView GetCPPType();
 		int GetSize();
 		bool CanBeOpened() { return IsExpandable() && !IsEmpty(); };
 
 		int GetMembers(TArray<PropertyItem>* MemberArray);
-		bool IsEmpty() { return !GetMembers(0); }
-		int GetMemberCount() { return GetMembers(0); }
+		bool IsEmpty() { return !GetMemberCount(); }
+		int GetMemberCount();
 	};
 
 	struct PropertyItemCategory {
@@ -127,20 +163,24 @@ namespace PropertyWatcher {
 	};
 
 	PropertyItem MakeObjectItem(void* _Ptr);
-	PropertyItem MakeObjectItemNamed(void* _Ptr, FString _NameOverwrite, FString NameID = "");
+	PropertyItem MakeObjectItemNamed(void* _Ptr, const char* _NameOverwrite, FAView NameID = "");
+	PropertyItem MakeObjectItemNamed(void* _Ptr, FString _NameOverwrite, FAView NameID = "");
+	PropertyItem MakeObjectItemNamed(void* _Ptr, FAView _NameOverwrite, FAView NameID = "");
 	PropertyItem MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index, bool IsObjectProp = false);
 	PropertyItem MakePropertyItem(void* _Ptr, FProperty* _Prop);
 	PropertyItem MakeFunctionItem(void* _Ptr, UFunction* _Function);
-	PropertyItem MakePropertyItemNamed(void* _Ptr, FProperty* _Prop, FString Name, FString DisplayName = "");
+	PropertyItem MakePropertyItemNamed(void* _Ptr, FProperty* _Prop, FAView Name, FAView NameID = "");
 	#define PropertyWatcherMakeStructItem(StructType, _Ptr) { PropertyWatcher::PointerType::Struct, _Ptr, 0, "", StaticStruct<StructType>() }
 	#define PropertyWatcherMakeStructItemNamed(StructType, _Ptr, _NameOverwrite) { PropertyWatcher::PointerType::Struct, _Ptr, 0, _NameOverwrite, StaticStruct<StructType>() }
 
 	//
 
-	void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TArray<MemberPath>& WatchedMembers, UWorld* World, bool* IsOpen, bool* WantsToSave, bool* WantsToLoad);
+	void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TArray<MemberPath>& WatchedMembers, UWorld* World, bool* IsOpen, bool* WantsToSave, bool* WantsToLoad, bool Init = false);
 	FString ConvertWatchedMembersToString(TArray<MemberPath>& WatchedMembers);
 	void LoadWatchedMembersFromString(FString String, TArray<MemberPath>& WatchedMembers);
 }
+
+#endif // PROPERTY_WATCHER_H_INCLUDE
 
 #ifdef PROPERTY_WATCHER_INTERNAL
 #undef PROPERTY_WATCHER_INTERNAL
@@ -164,10 +204,9 @@ namespace PropertyWatcher {
 		};
 
 		struct Test {
-			FString Ident;
-			FName Column;
+			FAView Ident;
 			Modifier Mod;
-			int ColumnID; // Helper, gets set later.
+			int ColumnID = 0; // ColumnID_Name
 		};
 
 		enum CommandType {
@@ -181,50 +220,23 @@ namespace PropertyWatcher {
 			Test Tst;
 			Operator Op;
 
-			// For debugging.
-			FString ToString() {
-				if (Type == Command_Test) {
-					FString s = FString::Printf(TEXT("%d"), Tst.ColumnID) + ": " + Tst.Ident; // @ToDo: Add Column name instead of ID.
-					if (Tst.Mod) {
-						if (Tst.Mod == Mod_Exact) s += "[Exact]";
-						else if (Tst.Mod == Mod_Regex) s += "[Regex]";
-						else if (Tst.Mod == Mod_Equal) s += "[Equal]";
-						else if (Tst.Mod == Mod_Greater) s += "[Greater]";
-						else if (Tst.Mod == Mod_Less) s += "[Less]";
-						else if (Tst.Mod == Mod_GreaterEqual) s += "[GreaterEqual]";
-						else if (Tst.Mod == Mod_LessEqual) s += "[LessEqual]";
-					}
-					return s;
-				} else if (Type == Command_Op) {
-					if (Op == OP_And) return "AND";
-					else if (Op == OP_Or) return "OR";
-					else if (Op == OP_Not) return "NOT";
-				} else if (Type == Command_Store) return "STORE";
-				return "";
-			}
+			FAView ToString(); // For debugging.
 		};
 
 		TArray<Command> Commands;
 
-		void ParseExpression(FString SearchString, TArray<FString> _Columns);
-		bool ApplyTests(TMap<int, FString>& ColumnTexts);
+		void ParseExpression(FAView SearchString, TArray<FAView> _Columns);
+		bool ApplyTests(struct CachedColumnText& ColumnTexts);
 	};
 
 	//
 
 	struct VisitedPropertyInfo {
 		void* Address;
-		FString CPPType; // @ToDo: Find a better way to compare types.
 
-		static VisitedPropertyInfo FromItem(PropertyItem& Item) { 
-			return { Item.Ptr, Item.GetCPPType() }; 
-		};
-		bool Compare(PropertyItem& Item) { 
-			return Address == Item.Ptr && CPPType == Item.GetCPPType(); 
-		}
-		bool Compare(VisitedPropertyInfo& Info) { 
-			return Address == Info.Address && CPPType == Info.CPPType;
-		}
+		void Set(PropertyItem& Item) { Address = Item.Ptr; };
+		bool Compare(PropertyItem& Item) { return Address == Item.Ptr; }
+		bool Compare(VisitedPropertyInfo& Info) { return Address == Info.Address; }
 	};
 
 	struct TreeState {
@@ -239,6 +251,8 @@ namespace PropertyWatcher {
 		FString* PathStringPtr;
 		char* StringBuffer;
 		int StringBufferSize;
+
+		FFloatInterval ScrollRegionRange; // For item culling.
 
 		// Global options.
 
@@ -271,30 +285,30 @@ namespace PropertyWatcher {
 
 		//
 
-		void EnableForceToggleNode(bool Mode, int StackIndexLimit) {
-			ForceToggleNodeOpenClose = true;
-			ForceToggleNodeMode = Mode;
-			ForceToggleNodeStackIndexLimit = StackIndexLimit;
-
-			VisitedPropertiesStack.Empty();
-		}
-
-		void DisableForceToggleNode() {
-			ForceToggleNodeOpenClose = false;
-		}
-
-		bool IsForceToggleNodeActive(int StackIndex) {
-			return ForceToggleNodeOpenClose && (StackIndex <= ForceToggleNodeStackIndexLimit);
-		}
+		void EnableForceToggleNode(bool Mode, int StackIndexLimit);
+		void DisableForceToggleNode() { ForceToggleNodeOpenClose = false; }
+		bool IsForceToggleNodeActive(int StackIndex) { return ForceToggleNodeOpenClose && (StackIndex <= ForceToggleNodeStackIndexLimit); }
+		bool ItemIsInfiniteLooping(VisitedPropertyInfo& PropertyInfo);
+		bool IsCurrentItemVisible() { return ScrollRegionRange.Contains(ImGui::GetCursorPosY()); }
 	};
 
-	void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentPath, int StackIndex = 0);
-	void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex);
-	FString GetColumnCellText(PropertyItem& Item, int ColumnID, TreeState* State = 0, TArray<FString>* CurrentMemberPath = 0, int* StackIndex = 0);
-	FString GetValueStringFromItem(PropertyItem& Item);
+	void DrawItemRow(TreeState& State, PropertyItem& Item, TInlineComponentArray<FAView>& CurrentPath, int StackIndex = 0);
+	void DrawItemChildren(TreeState& State, PropertyItem& Item, TInlineComponentArray<FAView>& CurrentMemberPath, int StackIndex);
+	FAView GetColumnCellText(PropertyItem& Item, int ColumnID, TreeState* State = 0, TInlineComponentArray<FAView>* CurrentMemberPath = 0, int* StackIndex = 0);
+	bool ItemHasMetaData(PropertyItem& Item);
+	FAView GetValueStringFromItem(PropertyItem& Item);
 	void DrawPropertyValue(PropertyItem& Item);
 
 	void* ContainerToValuePointer(PointerType Type, void* ContainerPtr, FProperty* MemberProp);
+
+	void DrawItemChildren(TreeState& State, PropertyItem&& Item, TInlineComponentArray<FAView>& CurrentMemberPath, int StackIndex) {
+		PropertyItem& Temp = Item;
+		return DrawItemChildren(State, Temp, CurrentMemberPath, StackIndex);
+	}
+	void DrawItemRow(TreeState& State, PropertyItem&& Item, TInlineComponentArray<FAView>& CurrentPath, int StackIndex = 0) {
+		PropertyItem& Temp = Item;
+		return DrawItemRow(State, Temp, CurrentPath, StackIndex);
+	}
 
 	//
 
@@ -335,88 +349,56 @@ namespace PropertyWatcher {
 
 	struct ColumnInfo {
 		int ID;
-		FString Name;
-		FString DisplayName;
+		FAView Name;
+		FAView DisplayName;
 		int Flags;
 		float InitWidth = 0.0f;
+	};
+
+	struct CachedColumnText {
+		bool ColumnTextsCached[ColumnID_MAX_SIZE] = {};
+		FAView ColumnTexts[ColumnID_MAX_SIZE];
+
+		void Add(int ColumnID, FAView Text) {
+			ColumnTextsCached[ColumnID] = true;
+			ColumnTexts[ColumnID] = Text;
+		}
+
+		FAView* Get(int ColumnID) {
+			if (ColumnTextsCached[ColumnID])
+				return &ColumnTexts[ColumnID];
+			return 0;
+		}
 	};
 
 	struct ColumnInfos {
 		TArray<ColumnInfo> Infos;
 
-		ColumnInfo* GetByName(FString _Name) {
-			for (int i = 0; i < Infos.Num() - 1; i++)
-				if (Infos[i].Name == _Name)
-					return &Infos[i];
-			return 0;
-		}
-		int GetIndexByName(FString _Name) {
-			for (int i = 0; i < Infos.Num() - 1; i++)
-				if (Infos[i].Name == _Name)
-					return i;
-			return -1;
-		}
-		TArray<FString> GetSearchNameArray() {
-			TArray<FString> Names;
+		TArray<FAView> GetSearchNameArray() {
+			TArray<FAView> Result;
 			for (auto It : Infos)
 				if (!It.Name.IsEmpty())
-					Names.Add(It.Name);
-			return Names;
+					Result.Add(It.Name);
+			return Result;
 		}
 	};
 
 	void SetTableRowBackgroundByStackIndex(int StackIndex);
 
 	// Makes the tree node widget for property name. Handles expansion/inlining/column management and so on.
-	bool BeginTreeNode(FString NameID, FString DisplayName, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags = 0);
-	void TreeNodeSetInline(TreeNodeState& NodeState, TreeState& State, int CurrentMemberPathLength, int StackIndex, bool Inline, int InlineStackDepth);
+	bool BeginTreeNode(const char* NameID, const char* DisplayName, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags = 0);
+	void TreeNodeSetInline(TreeNodeState& NodeState, TreeState& State, int CurrentMemberPathLength, int StackIndex, int InlineStackDepth);
 	void EndTreeNode(TreeNodeState& NodeState, TreeState& State);
 
 	// Helper to make category/section rows.
-	bool BeginSection(FString Name, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags = 0);
+	bool BeginSection(FAView Name, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags = 0);
 	void EndSection(TreeNodeState& NodeState, TreeState& State);
 
 	TArray<FName> GetClassFunctionList(UClass* Class);
 	TArray<UFunction*> GetObjectFunctionList(UObject* Obj);
-	FString GetItemMetadataCategory(PropertyItem& Item);
+	FAView GetItemMetadataCategory(PropertyItem& Item);
 	bool GetItemColor(PropertyItem& Item, ImVec4& Color);
 	bool GetObjFromObjPointerProp(PropertyItem& Item, UObject*& Object);
-
-	//
-
-	struct SectionHelper {
-		TArray<FString> Names;
-
-		bool            Enabled = false;
-		TArray<FString> SectionNames;
-		TArray<int>     StartIndexes;
-		int             CurrentSectionIndex = 0;
-
-		void Init() {
-			Enabled = true;
-
-			for (int i = 0; i < Names.Num(); i++) {
-				if (!SectionNames.Contains(Names[i])) {
-					SectionNames.Push(Names[i]);
-					StartIndexes.Push(i);
-				}
-			}
-			StartIndexes.Push(Names.Num()); // For last section to get correct member end index.
-
-			if (SectionNames.Num() < 2)
-				Enabled = false;
-		}
-
-		int GetSectionCount() {
-			return SectionNames.Num();
-		};
-
-		FString GetSectionInfo(int SectionIndex, int& MemberStartIndex, int& MemberEndIndex) {
-			MemberStartIndex = StartIndexes[SectionIndex];
-			MemberEndIndex = StartIndexes[SectionIndex + 1];
-			return SectionNames[SectionIndex];
-		}
-	};
 
 	//
 
@@ -438,11 +420,104 @@ namespace PropertyWatcher {
 
 		void QuickTooltip(FString TooltipText, ImGuiHoveredFlags Flags = ImGuiHoveredFlags_DelayNormal);
 	}
+
+	//
+
+	// Stable pointers, doubles in size, allocates/frees by moving index.
+	struct TempMemoryPool {
+		struct MemBucket {
+			char* Data = 0;
+			int Size = 0;
+			int Position = 0;
+
+			FORCEINLINE bool MemoryFits(int Count) { return Position + Count < Size; };
+			char* Get(int Count);
+			FORCEINLINE void Free(int Count) { Position -= Count; }
+		};
+
+		struct Marker {
+			int BucketIndex;
+			int DataPosition;
+		};
+
+		TInlineComponentArray<MemBucket, 16> Buckets;
+		TInlineComponentArray<Marker, 32> Markers;
+
+		bool IsInitialized = false;
+		int StartSize = 1024;
+		int CurrentBucketIndex = 0;
+
+		void Init(int _StartSize);
+		void GoToNextBucket();
+		void GoToPrevBucket() { CurrentBucketIndex--; }
+		FORCEINLINE MemBucket& GetCurrentBucket() { return Buckets[CurrentBucketIndex]; }
+		void AddBucket();
+		void ClearAll();
+		char* Get(int Count);
+		void Free(int Count);
+
+		void PushMarker();
+		void FreeToMarker();
+		void PopMarker(bool Free = true);
+
+		FAView Printf(const char* Fmt, ...);
+		FAView Append(FAView a, FAView b) { return Printf("%s%s", a.GetData(), b.GetData()); }
+		void Append(FAView* a, FAView b) { *a = Printf("%s%s", a->GetData(), b.GetData()); }
+		FAView CToA(const TCHAR* SrcBuffer, int SrcLen);
+		FAView SToA(FString&& String) { return CToA(*String, String.Len()); }
+		FAView SToA(FString& String) { return CToA(*String, String.Len()); }
+		FAView NToA(FName Name);
+
+		// @Note: 512 bytes should be fine? If not the text gets cut off, shouldn't be a big deal.
+		#define TMemBuilderS(Name, Size) TStringBuilderBase<ANSICHAR> Name(TMem.Get(Size), Size)
+		#define TMemBuilder(Name) TMemBuilderS(Name, 512)
+	};
+
+	TempMemoryPool TMem;
+	int TMemoryStartSize = 1024;
+
+	//
+
+	struct SectionHelper {
+		FName                         CurrentName = NAME_None;
+		int                           CurrentIndex = 0;
+		bool                          Enabled = false;
+		TInlineComponentArray<FAView> SectionNames;
+		TInlineComponentArray<int>    StartIndexes;
+		int                           CurrentSectionIndex = 0;
+
+		FORCEINLINE void Add(FName Name) {
+			if (Name != CurrentName) {
+				CurrentName = Name;
+				SectionNames.Add(TMem.NToA(CurrentName));
+				StartIndexes.Push(CurrentIndex);
+			}
+			CurrentIndex++;
+		}
+
+		void Init() {
+			StartIndexes.Push(CurrentIndex); // For last section to get correct member end index.
+			if (SectionNames.Num() >= 2)
+				Enabled = true;
+		}
+
+		int GetSectionCount() { return SectionNames.Num(); };
+
+		FAView GetSectionInfo(int SectionIndex, int& MemberStartIndex, int& MemberEndIndex) {
+			MemberStartIndex = StartIndexes[SectionIndex];
+			MemberEndIndex = StartIndexes[SectionIndex + 1];
+			return SectionNames[SectionIndex];
+		}
+	};
 }
+
 
 #endif // PROPERTY_WATCHER_INTERNAL
 #endif // UE_SERVER
-#endif // PROPERTY_WATCHER_H_INCLUDE
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 /*
 	MIT License

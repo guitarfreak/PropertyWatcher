@@ -93,20 +93,13 @@
 		- Actor component tree.
 		- Widget component tree.
 		- Favourites.
-		- Fix inline bug.
 		- Variable/function categories.
-		- Remember opened tree nodes between restarts.
 		- Add filter mode that hides everything.
-		- Look at performance.
-		- Actor list should clear on restart because pointers will be invalid. Should stop using statics.
 */
-
-#if !UE_SERVER
 
 #define PROPERTY_WATCHER_INTERNAL
 #include "PropertyWatcher.h"
 
-#include "imgui.h"
 #include "imgui_internal.h"
 
 #include "Kismet/KismetSystemLibrary.h"
@@ -117,8 +110,20 @@
 #include "UObject/Stack.h"
 #include "Engine/Level.h"
 
+#include "GameFramework/Actor.h"
+
 #include "Misc/ExpressionParser.h"
 #include "Internationalization/Regex.h"
+
+#include "Misc/TextFilterUtils.h"
+#include <inttypes.h> // For printing address.
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat"
+#endif
+
+#if !UE_SERVER
 
 // Switch on to turn on unreal insights events for performance tests.
 #define SCOPE_EVENT(name) 
@@ -133,14 +138,17 @@
 namespace PropertyWatcher {
 
 void ObjectsTab(bool DrawControls, TArray<PropertyItemCategory>& CategoryItems, TreeState* State = 0);
-void ActorsTab(bool DrawControls, UWorld* World, TreeState* State = 0, ColumnInfos* ColInfos = 0);
+void ActorsTab(bool DrawControls, UWorld* World, TreeState* State = 0, ColumnInfos* ColInfos = 0, bool Init = false);
 void WatchTab(bool DrawControls, TArray<MemberPath>&WatchedMembers, bool* WantsToSave, bool* WantsToLoad, TArray<PropertyItemCategory>&CategoryItems, TreeState * State = 0);
 
-void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TArray<MemberPath>& WatchedMembers, UWorld* World, bool* IsOpen, bool* WantsToSave, bool* WantsToLoad) {
+void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TArray<MemberPath>& WatchedMembers, UWorld* World, bool* IsOpen, bool* WantsToSave, bool* WantsToLoad, bool Init) {
 	SCOPE_EVENT("PropertyWatcher::Update");
 
-	*WantsToSave = false;
+	TMem.Init(TMemoryStartSize);
+	defer{ TMem.ClearAll(); };
+
 	*WantsToLoad = false;
+	*WantsToSave = false;
 
 	// Performance test.
 	static const int TimerCount = 30;
@@ -149,9 +157,11 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 	double StartTime = FPlatformTime::Seconds();
 
 	ImGui::SetNextWindowSize(ImVec2(430, 450), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin(ImGui_StoA(*("Property Watcher: " + WindowName)), IsOpen, ImGuiWindowFlags_MenuBar)) { ImGui::End(); return; }
+	bool WindowIsOpen = ImGui::Begin(ImGui_StoA(*("Property Watcher: " + WindowName)), IsOpen, ImGuiWindowFlags_MenuBar); defer{ ImGui::End(); };
+	if (!WindowIsOpen)
+		return;
 
-	static ImVec2 FramePadding = ImVec2(ImGui::GetStyle().FramePadding.x, 2);
+	static ImVec2 FramePadding = ImVec2(ImGui::GetStyle().CellPadding.x, 2);
 	static bool ShowObjectNamesOnAllProperties = true;
 	static bool ShowPerformanceInfo = false;
 
@@ -169,7 +179,7 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 			ImGui::Checkbox("Show object names on all properties", &ShowObjectNamesOnAllProperties);
 			ImGuiAddon::QuickTooltip("This puts the (<ObjectName>) at the end of properties that are also objects.");
 
-			ImGui::Checkbox("Show performance info", &ShowPerformanceInfo);
+			ImGui::Checkbox("Show debug/performance info", &ShowPerformanceInfo);
 			ImGuiAddon::QuickTooltip("Displays item count and average elapsed time in ms.");
 		}
 		if (ImGui::BeginMenu("Help")) {
@@ -222,6 +232,8 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 			ImGui::Text(ImGui_StoA(*Text));
 		}
 		ImGui::SameLine();
+		//ImGuiWindow* window = ImGui::GetCurrentWindow();
+		auto Window = ImGui::GetCurrentContext()->CurrentWindow;
 		ImGui::Checkbox("Filter", &SearchFilterActive);
 		ImGuiAddon::QuickTooltip("Enable filtering of rows that didn't pass the search in the search box.");
 		ImGui::SameLine();
@@ -232,19 +244,12 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 		ImGuiAddon::QuickTooltip("Show functions in actor items.");
 		ImGui::Spacing();
 
-		auto SearchNameArray = ColInfos.GetSearchNameArray();
 		SearchParser.ParseExpression(SearchString, ColInfos.GetSearchNameArray());
-		for (auto& Command : SearchParser.Commands) {
-			if (Command.Type == SimpleSearchParser::Command_Test) {
-				int Pos = SearchNameArray.Find(Command.Tst.Column.ToString());
-				if (Pos != INDEX_NONE)
-					Command.Tst.ColumnID = Pos;
-			}
-		}
 	}
 
 	// Tabs.
 	int ItemCount = 0;
+	float ScrollRegionHeight = 0;
 	if (ImGui::BeginTabBar("MyTabBar")) {
 		defer{ ImGui::EndTabBar(); };
 
@@ -296,7 +301,8 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 					State.ListFunctionsOnObjectItems = ListFunctionsOnObjectItems;
 					State.ShowObjectNamesOnAllProperties = ShowObjectNamesOnAllProperties;
 					State.SearchParser = SearchParser;
-
+					State.ScrollRegionRange = FFloatInterval(ImGui::GetScrollY(), ImGui::GetScrollY() + TableSize.y);
+					
 					defer {
 						if (State.AddressWasHovered) {
 							State.AddressWasHovered = false;
@@ -308,7 +314,7 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 					if (CurrentTab == "Objects")
 						ObjectsTab(false, CategoryItems, &State);
 					else if (CurrentTab == "Actors")
-						ActorsTab(false, World, &State, &ColInfos);
+						ActorsTab(false, World, &State, &ColInfos, Init);
 					else if (CurrentTab == "Watch")
 						WatchTab(false, WatchedMembers, WantsToSave, WantsToLoad, CategoryItems, &State);
 
@@ -324,6 +330,7 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 					}
 
 					ItemCount = State.ItemDrawCount;
+					ScrollRegionHeight = ImGui::GetScrollMaxY();
 					ImGui::EndTable();
 				}
 			}
@@ -344,13 +351,24 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 			AverageTime /= TimerCount;
 			ImGui::Text("%.3f ms", AverageTime * 1000.0f);
 		}
+		ImGui::SameLine();
+		ImGui::Text("-");
+		ImGui::SameLine();
+		ImGui::Text("ScrollHeight: %.0f", ScrollRegionHeight);
+
+		ImGui::SameLine();
+		ImGui::Text("-");
+		ImGui::SameLine();
+
+		ImGui::Text("HoveredId: %u", ImGui::GetHoveredID());
 	}
 
 	ImRect TargetRect(ImGui::GetWindowContentRegionMin(), ImGui::GetWindowContentRegionMax());
 	TargetRect.Translate(ImGui::GetWindowPos());
 	TargetRect.Translate(ImVec2(0, ImGui::GetScrollY()));
 
-	if (ImGui::BeginDragDropTargetCustom(TargetRect, ImGui::GetHoveredID())) {
+	int HoveredID = ImGui::GetHoveredID() == 0 ? 1 : ImGui::GetHoveredID();
+	if (ImGui::BeginDragDropTargetCustom(TargetRect, HoveredID)) {
 		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PropertyWatcherMember")) {
 			char* Payload = (char*)payload->Data;
 
@@ -362,19 +380,17 @@ void Update(FString WindowName, TArray<PropertyItemCategory>& CategoryItems, TAr
 }
 
 void ObjectsTab(bool DrawControls, TArray<PropertyItemCategory>& CategoryItems, TreeState* State) {
-	SCOPE_EVENT("PropertyWatcher::ObjectsTab");
-
 	if (DrawControls) {
 		return;
 	}
 	
-	TArray<FString> CurrentPath;
+	TInlineComponentArray<FAView> CurrentPath;
 	for (auto& Category : CategoryItems) {
 		bool MakeCategorySection = !Category.Name.IsEmpty();
 
 		TreeNodeState NodeState = {};
 		if (MakeCategorySection)
-			BeginSection(Category.Name, NodeState, *State, -1, ImGuiTreeNodeFlags_DefaultOpen);
+			BeginSection(TMem.SToA(Category.Name), NodeState, *State, -1, ImGuiTreeNodeFlags_DefaultOpen);
 
 		if (NodeState.IsOpen || !MakeCategorySection)
 			for (auto& Item : Category.Items)
@@ -385,12 +401,15 @@ void ObjectsTab(bool DrawControls, TArray<PropertyItemCategory>& CategoryItems, 
 	}
 }
 
-void ActorsTab(bool DrawControls, UWorld* World, TreeState* State, ColumnInfos* ColInfos) {
+void ActorsTab(bool DrawControls, UWorld* World, TreeState* State, ColumnInfos* ColInfos, bool Init) {
 	static TArray<PropertyItem> ActorItems;
 	static bool UpdateActorsEveryFrame = false;
 	static bool SearchAroundPlayer = false;
 	static float ActorsSearchRadius = 5;
 	static bool DrawOverlapSphere = false;
+
+	if (Init)
+		ActorItems.Empty();
 
 	if (DrawControls) {
 		static TArray<bool> CollisionChannelsActive;
@@ -539,10 +558,20 @@ void ActorsTab(bool DrawControls, UWorld* World, TreeState* State, ColumnInfos* 
 				const ImGuiTableColumnSortSpecs* sort_spec = &s_current_sort_specs->Specs[n];
 				int delta = 0;
 				switch (sort_spec->ColumnUserID) {
-					case ColumnID_Name:    delta = (strcmp(ImGui_StoA(*((UObject*)a->Ptr)->GetName()), ImGui_StoA(*((UObject*)b->Ptr)->GetName())));
-					case ColumnID_Cpptype: delta = (strcmp(ImGui_StoA(*a->GetCPPType()), ImGui_StoA(*b->GetCPPType())));
-					case ColumnID_Address: delta = ((int64)a->Ptr - (int64)b->Ptr);
-					case ColumnID_Size:    delta = (a->GetSize() - b->GetSize());
+					//case ColumnID_Name:    delta = (strcmp(ImGui_StoA(*((UObject*)a->Ptr)->GetName()), ImGui_StoA(*((UObject*)b->Ptr)->GetName())));
+					//case ColumnID_Cpptype: delta = strcmp(a->GetCPPType().GetData(), b->GetCPPType().GetData());
+					case ColumnID_Name: {
+						delta = FCString::Strcmp(*((UObject*)a->Ptr)->GetName(), *((UObject*)b->Ptr)->GetName());
+					} break;
+					case ColumnID_Cpptype: {
+						delta = a->GetCPPType().Compare(b->GetCPPType());
+					} break;
+					case ColumnID_Address: {
+						delta = (int64)a->Ptr - (int64)b->Ptr;
+					} break;
+					case ColumnID_Size: {
+						delta = a->GetSize() - b->GetSize();
+					} break;
 					default: IM_ASSERT(0);
 				}
 				if (delta > 0)
@@ -565,7 +594,7 @@ void ActorsTab(bool DrawControls, UWorld* World, TreeState* State, ColumnInfos* 
 		}
 	}
 	
-	TArray<FString> CurrentPath;
+	TInlineComponentArray<FAView> CurrentPath;
 	for (auto& Item : ActorItems)
 		DrawItemRow(*State, Item, CurrentPath);
 }
@@ -588,7 +617,7 @@ void WatchTab(bool DrawControls, TArray<MemberPath>& WatchedMembers, bool* Wants
 	for (auto& It : CategoryItems)
 		Items.Append(It.Items);
 
-	TArray<FString> CurrentPath;
+	TInlineComponentArray<FAView> CurrentPath;
 	int MemberIndexToDelete = -1;
 	bool MoveHappened = false;
 	int MoveIndexFrom = -1;
@@ -629,103 +658,126 @@ void WatchTab(bool DrawControls, TArray<MemberPath>& WatchedMembers, bool* Wants
 
 //
 
-void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex) {
+void TreeState::EnableForceToggleNode(bool Mode, int StackIndexLimit) {
+	ForceToggleNodeOpenClose = true;
+	ForceToggleNodeMode = Mode;
+	ForceToggleNodeStackIndexLimit = StackIndexLimit;
+
+	VisitedPropertiesStack.Empty();
+}
+
+bool TreeState::ItemIsInfiniteLooping(VisitedPropertyInfo& PropertyInfo) {
+	if (!PropertyInfo.Address)
+		return false;
+
+	int Count = 0;
+	for (auto& It : VisitedPropertiesStack) {
+		if (It.Compare(PropertyInfo)) {
+			Count++;
+			if (Count == 3) // @Todo: Think about what's appropriate.
+				return true;
+		}
+	}
+	return false;
+}
+
+//
+
+void DrawItemRow(TreeState& State, PropertyItem& Item, TInlineComponentArray<FAView>& CurrentMemberPath, int StackIndex) {
 	SCOPE_EVENT("PropertyWatcher::DrawItemRow");
 
-	if (State.ItemDrawCount > 100000) // @Todo: Random safety measure against infinite recursion, do better.
+	if (State.ItemDrawCount > 100000) // @Todo: Random safety measure against infinite recursion, could be better?
 		return;
 
-	TMap<int, FString> ColumnTexts;
+	bool ItemCanBeOpened = Item.CanBeOpened();
+	bool ItemIsVisible = State.IsCurrentItemVisible();
+	bool SearchIsActive = (bool)State.SearchParser.Commands.Num();
+
+	CachedColumnText ColumnTexts;
+	FAView ItemDisplayName;
 	bool ItemIsSearched = false;
-	{
-		SCOPE_EVENT("PropertyWatcher::DrawItemRow::ColumnTexts");
+	
+	if (!ItemIsVisible && !State.SearchFilterActive) {
+		ItemDisplayName = "";
 
-		ColumnTexts.Add(ColumnID_Name, GetColumnCellText(Item, ColumnID_Name, &State, &CurrentMemberPath, &StackIndex)); // Default.
+	} else {
+		ItemDisplayName = GetColumnCellText(Item, ColumnID_Name, &State, &CurrentMemberPath, &StackIndex);
 
-		// Cache the cell texts that we need for the text search.
-		for (auto Command : State.SearchParser.Commands)
-			if (Command.Type == SimpleSearchParser::Command_Test && !ColumnTexts.Find(Command.Tst.ColumnID))
-				ColumnTexts.Add(Command.Tst.ColumnID, GetColumnCellText(Item, Command.Tst.ColumnID, &State, &CurrentMemberPath, &StackIndex));
+		if (SearchIsActive) {
+			ColumnTexts.Add(ColumnID_Name, ItemDisplayName); // Default.
 
-		if (State.SearchParser.Commands.Num())
+			// Cache the cell texts that we need for the text search.
+			for (auto& Command : State.SearchParser.Commands)
+				if (Command.Type == SimpleSearchParser::Command_Test && !ColumnTexts.Get(Command.Tst.ColumnID)) {
+					FAView view = GetColumnCellText(Item, Command.Tst.ColumnID, &State, &CurrentMemberPath, &StackIndex);
+					if (view.IsEmpty()) {
+						int stop = 234;
+					}
+					ColumnTexts.Add(Command.Tst.ColumnID, view);
+				}
+
 			ItemIsSearched = State.SearchParser.ApplyTests(ColumnTexts);
-		else
-			ItemIsSearched = false;
+		}
 	}
 
-	auto FindOrGetColumnText = [&State, &Item, &ColumnTexts, &CurrentMemberPath, &StackIndex](int ColumnID) -> FString {
-		if (const FString* Result = ColumnTexts.Find(ColumnID))
+	auto FindOrGetColumnText = [&Item, &ColumnTexts](int ColumnID) -> FAView {
+		if (FAView* Result = ColumnTexts.Get(ColumnID))
 			return *Result;
 		else
-			return GetColumnCellText(Item, ColumnID, &State);
+			return GetColumnCellText(Item, ColumnID);
 	};
 
 	// Item is skipped.
-	if (State.SearchFilterActive && !ItemIsSearched && !Item.CanBeOpened())
+	if (State.SearchFilterActive && !ItemIsSearched && !ItemCanBeOpened)
 		return;
 
 	// Misc setup.
-
+	
 	State.ItemDrawCount++;
-	CurrentMemberPath.Push(Item.GetAuthoredName());
-
-	if (StackIndex == 0) {
-		if (!Item.NameIDOverwrite.IsEmpty())
-			// Usefull if you want to add an object to the object table, that 
-			// has an unstable pointer and name. Not used anywhere else yet.
-			ImGui::PushID(ImGui_StoA(*Item.NameIDOverwrite));
-		else
-			ImGui::PushID(Item.Ptr);
-	} else
-		ImGui::PushID(ImGui_StoA(*Item.GetAuthoredName()));
+	FAView ItemAuthoredName = ItemCanBeOpened ? Item.GetAuthoredName() : "";
+	if (ItemCanBeOpened)
+		CurrentMemberPath.Push(ItemAuthoredName);
 
 	TreeNodeState NodeState;
+	{
+		NodeState = {};
+		NodeState.HasBranches = ItemCanBeOpened;
+		NodeState.ItemInfo.Set(Item);
 
-	// Executed after all members are drawn.
-	defer{
-		CurrentMemberPath.Pop();
-		ImGui::PopID();
-		EndTreeNode(NodeState, State);
-	};
+		if (ItemIsVisible && ItemIsSearched) {
+			NodeState.PushTextColor = true;
+			NodeState.TextColor = ImVec4(1, 0.5f, 0, 1);
+		}
+	}
+
+	bool IsTopWatchItem = State.CurrentWatchItemIndex != -1 && StackIndex == 0;
+	if (IsTopWatchItem)
+		ImGui::PushID(State.CurrentWatchItemIndex);
 
 	// @Column(name): Property name
-	bool IsNameNodeVisible = true;
 	{
-		SCOPE_EVENT("PropertyWatcher::DrawItemRow::NodeLogic");
+		if (ItemIsVisible && !Item.IsValid())
+			ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 
-		if (!Item.IsValid()) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-		defer{ if (!Item.IsValid()) ImGui::PopStyleColor(1); };
-
-		{
-			NodeState = {};
-			NodeState.HasBranches = Item.CanBeOpened();
-			NodeState.ItemInfo = VisitedPropertyInfo::FromItem(Item);
-
-			if (ItemIsSearched) {
-				NodeState.PushTextColor = true;
-				NodeState.TextColor = ImVec4(1, 0.5f, 0, 1);
-			}
-
-			BeginTreeNode("##Object", FindOrGetColumnText(ColumnID_Name), NodeState, State, StackIndex, 0);
-			IsNameNodeVisible = ImGui::IsItemVisible();
-		}
+		BeginTreeNode(*ItemAuthoredName, *ItemDisplayName, NodeState, State, StackIndex, 0);
 
 		bool NodeIsMarkedAsInlined = false;
 
 		// Right click popup for inlining.
-		{
+		if(NodeState.HasBranches) {
 			// Do tree push to get right bool from storage when node is open or closed.
-			if (!NodeState.IsOpen) { ImGui::TreePush("##Object"); };
-			defer{ if (!NodeState.IsOpen) { ImGui::TreePop(); } };
+			if (!NodeState.IsOpen) 
+				ImGui::TreePush(*ItemAuthoredName);
 
-			auto StorageIDIsInlined = ImGui::GetID("IsInlined");
-			auto StorageIDInlinedStackDepth = ImGui::GetID("InlinedStackDepth");
+			ImGuiID StorageIDIsInlined = ImGui::GetID("IsInlined");
+			ImGuiID StorageIDInlinedStackDepth = ImGui::GetID("InlinedStackDepth");
 
 			auto Storage = ImGui::GetStateStorage();
 			NodeIsMarkedAsInlined = Storage->GetBool(StorageIDIsInlined);
-			int InlinedStackDepth = Storage->GetInt(StorageIDInlinedStackDepth, 0);
+			int InlinedStackDepth = Storage->GetInt(StorageIDInlinedStackDepth, 1);
 
-			TreeNodeSetInline(NodeState, State, CurrentMemberPath.Num(), StackIndex, NodeIsMarkedAsInlined, InlinedStackDepth);
+			if (NodeIsMarkedAsInlined && !State.ForceInlineChildItems && InlinedStackDepth)
+				TreeNodeSetInline(NodeState, State, CurrentMemberPath.Num(), StackIndex, InlinedStackDepth);
 
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
 				ImGui::OpenPopup("ItemPopup");
@@ -742,75 +794,91 @@ void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMe
 
 				ImGui::EndPopup();
 			}
+
+			if (!NodeState.IsOpen) 
+				ImGui::TreePop();
 		}
 
-		// Drag to watch window.
-		if (StackIndex > 0 && Item.Type != PointerType::Function) {
-			if (ImGui::BeginDragDropSource()) {
-				FString PathString = FString::Join(CurrentMemberPath, TEXT("."));
-				const char* String = ImGui_StoA(*PathString);
-				ImGui::SetDragDropPayload("PropertyWatcherMember", String, PathString.Len() + 1);
-
-				ImGui::Text("Add to watch list:");
-				ImGui::Text(String);
-				ImGui::EndDragDropSource();
-			}
-		}
-
-		// Drag to move watch item. Only available when top level watch list item.
-		if (State.CurrentWatchItemIndex != -1 && StackIndex == 0) {
-			if (ImGui::BeginDragDropSource()) {
-				ImGui::SetDragDropPayload("PropertyWatcherMoveIndex", &State.CurrentWatchItemIndex, sizeof(int));
-				ImGui::Text("Move Item: %d", State.CurrentWatchItemIndex);
-				ImGui::EndDragDropSource();
-			}
-
-			if (ImGui::BeginDragDropTarget()) {
-				if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("PropertyWatcherMoveIndex")) {
-					if (Payload->Data) {
-						State.MoveHappened = true;
-						State.MoveFrom = *(int*)Payload->Data;
-						State.MoveTo = State.CurrentWatchItemIndex;
+		if (ItemIsVisible)
+		{
+			// Drag to watch window.
+			if (StackIndex > 0 && Item.Type != PointerType::Function) {
+				if (ImGui::BeginDragDropSource()) {
+					TMemBuilder(Builder);
+					for (int i = 0; i < CurrentMemberPath.Num(); i++) {
+						if (i > 0) Builder.AppendChar('.');
+						Builder.Append(CurrentMemberPath[i]);
 					}
+					if (!NodeState.HasBranches)
+						Builder << '.' << ItemDisplayName;
+
+					ImGui::SetDragDropPayload("PropertyWatcherMember", *Builder, Builder.Len());
+					ImGui::Text("Add to watch list:");
+					ImGui::Text(*Builder);
+					ImGui::EndDragDropSource();
 				}
-				ImGui::EndDragDropTarget();
 			}
 
-			// Handle watch list item path editing.
-			if (State.PathStringPtr) {
+			// Drag to move watch item. Only available when top level watch list item.
+			if (IsTopWatchItem) {
+				if (ImGui::BeginDragDropSource()) {
+					ImGui::SetDragDropPayload("PropertyWatcherMoveIndex", &State.CurrentWatchItemIndex, sizeof(int));
+					ImGui::Text("Move Item: %d", State.CurrentWatchItemIndex);
+					ImGui::EndDragDropSource();
+				}
+
+				if (ImGui::BeginDragDropTarget()) {
+					if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("PropertyWatcherMoveIndex")) {
+						if (Payload->Data) {
+							State.MoveHappened = true;
+							State.MoveFrom = *(int*)Payload->Data;
+							State.MoveTo = State.CurrentWatchItemIndex;
+						}
+					}
+					ImGui::EndDragDropTarget();
+				}
+
+				// Handle watch list item path editing.
+				if (State.PathStringPtr) {
+					ImGui::SameLine();
+					ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+					ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight());
+
+					FString StringID = FString::Printf(TEXT("##InputPathText %d"), State.CurrentWatchItemIndex);
+
+					static TArray<char> StringBuffer;
+					StringBuffer.Empty();
+					StringBuffer.Append(ImGui_StoA(**State.PathStringPtr), State.PathStringPtr->Len() + 1);
+					if (ImGuiAddon::InputText(ImGui_StoA(*StringID), StringBuffer, ImGuiInputTextFlags_EnterReturnsTrue))
+						(*State.PathStringPtr) = FString(StringBuffer);
+
+					ImGui::PopStyleColor(1);
+				}
+			}
+
+			if (NodeIsMarkedAsInlined) {
 				ImGui::SameLine();
-				ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0)); defer{ ImGui::PopStyleColor(1); };
-				ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight());
+				ImGui::Text("*");
+			}
 
-				FString StringID = FString::Printf(TEXT("##InputPathText %d"), State.CurrentWatchItemIndex);
-
-				static TArray<char> StringBuffer;
-				StringBuffer.Empty();
-				StringBuffer.Append(ImGui_StoA(**State.PathStringPtr), State.PathStringPtr->Len() + 1);
-				if (ImGuiAddon::InputText(ImGui_StoA(*StringID), StringBuffer, ImGuiInputTextFlags_EnterReturnsTrue))
-					(*State.PathStringPtr) = FString(StringBuffer);
+			// This puts the (<ObjectName>) at the end of properties that are also objects.
+			if (State.ShowObjectNamesOnAllProperties) {
+				if (Item.Type == PointerType::Property && CastField<FObjectProperty>(Item.Prop) && Item.Ptr) {
+					ImGui::SameLine();
+					ImGui::BeginDisabled();
+					FName Name = ((UObject*)Item.Ptr)->GetFName();
+					ImGui::Text(*TMem.Printf("(%s)", *TMem.NToA(Name)));
+					ImGui::EndDisabled();
+				}
 			}
 		}
 
-		if (NodeIsMarkedAsInlined) {
-			ImGui::SameLine();
-			ImGui::Text("*");
-		}
-
-		// This puts the (<ObjectName>) at the end of properties that are also objects.
-		if (State.ShowObjectNamesOnAllProperties) {
-			if (Item.Type == PointerType::Property && CastField<FObjectProperty>(Item.Prop) && Item.Ptr) {
-				ImGui::SameLine();
-				ImGui::BeginDisabled();
-				ImGui::Text(ImGui_StoA(*FString::Printf(TEXT("(%s)"), *((UObject*)Item.Ptr)->GetName())));
-				ImGui::EndDisabled();
-			}
-		}
+		if (ItemIsVisible && !Item.IsValid())
+			ImGui::PopStyleColor(1);
 	}
 
 	// Draw other columns if visible. 
-	// @Todo: Should check row and not tree node for visibility.
-	if (!IsNameNodeVisible) {
+	if (!ItemIsVisible || NodeState.ItemIsInlined) {
 		ImGui::TableSetColumnIndex(ImGui::TableGetColumnCount() - 1);
 
 	} else {
@@ -823,15 +891,14 @@ void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMe
 
 		// @Column(metadata): Metadata							
 		if (ImGui::TableNextColumn() && Item.Prop) {
-			FString MetaDataText = FindOrGetColumnText(ColumnID_Metadata);
-			if (MetaDataText.Len()) {
+			if (ItemHasMetaData(Item)) {
 				ImGui::TextDisabled("(?)");
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
 					ImGui::BeginTooltip();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-
+					
 					if (MetaData_Available)
-						ImGui::TextUnformatted(ImGui_StoA(*MetaDataText));
+						ImGui::TextUnformatted(*FindOrGetColumnText(ColumnID_Metadata));
 					else
 						ImGui::TextUnformatted("Data not available in shipping builds.");
 
@@ -848,32 +915,33 @@ void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMe
 				{
 					ImVec4 cText = ImVec4(0, 0, 0, 0);
 					GetItemColor(Item, cText);
-					ImGui::PushStyleColor(ImGuiCol_Text, cText); defer{ ImGui::PopStyleColor(); };
+					ImGui::PushStyleColor(ImGuiCol_Text, cText); 
 					ImGui::Bullet();
+					ImGui::PopStyleColor();
 				}
 				ImGui::SameLine();
-				ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Type)));
+				ImGui::Text(*FindOrGetColumnText(ColumnID_Type));
 			}
 		}
 
 		// @Column(cpptype): CPP Type
 		if (ImGui::TableNextColumn())
-			ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Cpptype)));
+			ImGui::Text(*FindOrGetColumnText(ColumnID_Cpptype));
 
 		// @Column(class): Owner Class
 		if (ImGui::TableNextColumn())
-			ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Class)));
+			ImGui::Text(*FindOrGetColumnText(ColumnID_Class));
 
 		// @Column(category): Metadata Category
 		if (ImGui::TableNextColumn())
-			ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Category)));
+			ImGui::Text(*FindOrGetColumnText(ColumnID_Category));
 
 		// @Column(address): Adress
 		if (ImGui::TableNextColumn()) {
 			if (State.DrawHoveredAddress && Item.Ptr == State.HoveredAddress)
-				ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), ImGui_StoA(*FindOrGetColumnText(ColumnID_Address)));
+				ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), *FindOrGetColumnText(ColumnID_Address));
 			else
-				ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Address)));
+				ImGui::Text(*FindOrGetColumnText(ColumnID_Address));
 
 			if (ImGui::IsItemHovered()) {
 				State.AddressWasHovered = true;
@@ -883,11 +951,11 @@ void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMe
 
 		// @Column(size): Size
 		if (ImGui::TableNextColumn())
-			ImGui::Text(ImGui_StoA(*FindOrGetColumnText(ColumnID_Size)));
+			ImGui::Text(*FindOrGetColumnText(ColumnID_Size));
 
 		// Close Button
 		if (ImGui::TableNextColumn())
-			if (State.CurrentWatchItemIndex != -1 && StackIndex == 0)
+			if (IsTopWatchItem)
 				if (ImGui::Button("x", ImVec2(ImGui::GetFrameHeight(), 0)))
 					State.WatchItemGotDeleted = true;
 	}
@@ -896,18 +964,26 @@ void DrawItemRow(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMe
 	if (NodeState.IsOpen) {
 		bool PushAddressesStack = State.ForceToggleNodeOpenClose || State.ForceInlineChildItems;
 		if (PushAddressesStack)
-			State.VisitedPropertiesStack.Push(VisitedPropertyInfo::FromItem(Item));
+			State.VisitedPropertiesStack.Push(NodeState.ItemInfo);
+		TMem.PushMarker();
 
 		DrawItemChildren(State, Item, CurrentMemberPath, StackIndex);
-
+		
+		TMem.PopMarker();
 		if (PushAddressesStack)
-			State.VisitedPropertiesStack.Pop();
+			State.VisitedPropertiesStack.Pop(false);
 	}
+
+	if (ItemCanBeOpened)
+		CurrentMemberPath.Pop(false);
+
+	EndTreeNode(NodeState, State);
+
+	if (IsTopWatchItem)
+		ImGui::PopID();
 }
 
-void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& CurrentMemberPath, int StackIndex) {
-	SCOPE_EVENT("PropertyWatcher::DrawItemChildren");
-
+void DrawItemChildren(TreeState& State, PropertyItem& Item, TInlineComponentArray<FAView>& CurrentMemberPath, int StackIndex) {
 	check(Item.Ptr); // Do we need this check here? Can't remember.
 
 	if (Item.Prop &&
@@ -917,8 +993,7 @@ void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& Curr
 		UObject* Obj = 0;
 		bool IsValid = GetObjFromObjPointerProp(Item, Obj);
 		if (IsValid) {
-			auto NewItem = MakeObjectItem(Obj);
-			return DrawItemChildren(State, NewItem, CurrentMemberPath, StackIndex + 1);
+			return DrawItemChildren(State, MakeObjectItem(Obj), CurrentMemberPath, StackIndex + 1);
 		}
 	}
 
@@ -933,7 +1008,7 @@ void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& Curr
 		SectionHelper SectionHelper;
 		if (State.EnableClassCategoriesOnObjectItems && ItemIsObject) {
 			for (auto& Member : Members)
-				SectionHelper.Names.Push(((FField*)(Member).Prop)->Owner.GetName());
+				SectionHelper.Add(((FField*)(Member).Prop)->Owner.GetFName());
 
 			SectionHelper.Init();
 		}
@@ -945,7 +1020,7 @@ void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& Curr
 		} else {
 			for (int SectionIndex = 0; SectionIndex < SectionHelper.GetSectionCount(); SectionIndex++) {
 				int MemberStartIndex, MemberEndIndex;
-				FString CurrentSectionName = SectionHelper.GetSectionInfo(SectionIndex, MemberStartIndex, MemberEndIndex);
+				auto CurrentSectionName = SectionHelper.GetSectionInfo(SectionIndex, MemberStartIndex, MemberEndIndex);
 
 				TreeNodeState NodeState = {};
 				NodeState.OverrideNoTreePush = true;
@@ -967,13 +1042,12 @@ void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& Curr
 		if (Functions.Num()) {
 			TreeNodeState FunctionSection = {};
 			BeginSection("Functions", FunctionSection, State, StackIndex, 0);
-			defer{ EndSection(FunctionSection, State); };
 
 			if (FunctionSection.IsOpen) {
 				SectionHelper SectionHelper;
 				if (State.EnableClassCategoriesOnObjectItems) {
 					for (auto& Function : Functions)
-						SectionHelper.Names.Push(Function->GetOuterUClass()->GetName());
+						SectionHelper.Add(Function->GetOuterUClass()->GetFName());
 
 					SectionHelper.Init();
 				}
@@ -985,7 +1059,7 @@ void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& Curr
 				} else {
 					for (int SectionIndex = 0; SectionIndex < SectionHelper.GetSectionCount(); SectionIndex++) {
 						int MemberStartIndex, MemberEndIndex;
-						FString CurrentSectionName = SectionHelper.GetSectionInfo(SectionIndex, MemberStartIndex, MemberEndIndex);
+						auto CurrentSectionName = SectionHelper.GetSectionInfo(SectionIndex, MemberStartIndex, MemberEndIndex);
 
 						TreeNodeState NodeState = {};
 						NodeState.OverrideNoTreePush = true;
@@ -999,29 +1073,40 @@ void DrawItemChildren(TreeState& State, PropertyItem Item, TArray<FString>& Curr
 					}
 				}
 			}
+
+			EndSection(FunctionSection, State);
 		}
 	}
 }
 
-FString GetColumnCellText(PropertyItem& Item, int ColumnID, TreeState* State, TArray<FString>* CurrentMemberPath, int* StackIndex) {
-	SCOPE_EVENT("PropertyWatcher::GetColumnCellText");
+bool ItemHasMetaData(PropertyItem& Item) {
+	if (!Item.Prop)
+		return false;
 
-	FString Result = "";
+	bool Result = false;
+#if MetaData_Available
+	if (const TMap<FName, FString>* MetaData = Item.Prop->GetMetaDataMap())
+		Result = (bool)MetaData->Num();
+#endif
+
+	return Result;
+}
+
+FAView GetColumnCellText(PropertyItem& Item, int ColumnID, TreeState* State, TInlineComponentArray<FAView>* CurrentMemberPath, int* StackIndex) {
+	FAView Result = "";
 	if (ColumnID == ColumnID_Name) {
 		if (CurrentMemberPath && StackIndex) {
 			bool TopLevelWatchListItem = State->CurrentWatchItemIndex != -1 && (*StackIndex) == 0;
 			bool PathIsEditable = TopLevelWatchListItem && State->PathStringPtr;
 
 			if (!PathIsEditable) {
-				if (State->ForceInlineChildItems) {
-					FString StrName = Item.GetAuthoredName();
-					TArray<FString> InlinedMemberPath = *CurrentMemberPath;
-					for (int i = 0; i < State->InlineMemberPathIndexOffset; i++) {
-						if (InlinedMemberPath.Num())
-							InlinedMemberPath.RemoveAt(0);
-					}
-					InlinedMemberPath.Push(StrName);
-					Result = FString::Join(InlinedMemberPath, TEXT("."));
+				if (State->ForceInlineChildItems && State->InlineStackIndexLimit) {
+					TMemBuilder(Builder);
+					for (int i = State->InlineMemberPathIndexOffset; i < CurrentMemberPath->Num(); i++)
+						Builder.Appendf("%s.", (*CurrentMemberPath)[i].GetData());
+					Builder.Append(Item.GetAuthoredName());
+					Result = *Builder;
+
 				} else
 					Result = Item.GetAuthoredName();
 			}
@@ -1035,15 +1120,17 @@ FString GetColumnCellText(PropertyItem& Item, int ColumnID, TreeState* State, TA
 		if (const TMap<FName, FString>* MetaData = Item.Prop->GetMetaDataMap()) {
 			TArray<FName> Keys;
 			MetaData->GenerateKeyArray(Keys);
-			int i = 0;
-			for (auto Key : Keys) {
-				if (i != 0) Result.Append("\n\n");
-				i++;
+			TStringBuilder<256> Builder;
 
-				const FString* Value = MetaData->Find(Key);
-				Result.Append(FString::Printf(TEXT("%s:\n\t"), *Key.ToString()));
-				Result.Append(*Value);
+			int i = -1;
+			for (auto Key : Keys) {
+				i++;
+				if (i != 0)
+					Builder.Append("\n\n");
+				Builder.Appendf(TEXT("%s:\n\t"), *Key.ToString());
+				Builder.Append(*MetaData->Find(Key));
 			}
+			Result = TMem.CToA(*Builder, Builder.Len());
 		}
 #endif
 
@@ -1056,35 +1143,33 @@ FString GetColumnCellText(PropertyItem& Item, int ColumnID, TreeState* State, TA
 	} else if (ColumnID == ColumnID_Class) {
 		if (Item.Prop) {
 			FFieldVariant Owner = ((FField*)Item.Prop)->Owner;
-			Result = Owner.GetName();
+			Result = TMem.NToA(Owner.GetFName());
 
 		} else if (Item.Type == PointerType::Function) {
 			UClass* Class = ((UFunction*)Item.StructPtr)->GetOuterUClass();
 			if (Class)
-				Result = Class->GetName();
+				Result = TMem.NToA(Class->GetFName());
 		}
 
 	} else if (ColumnID == ColumnID_Category) {
 		Result = GetItemMetadataCategory(Item);
 
 	} else if (ColumnID == ColumnID_Address) {
-		Result = FString::Printf(TEXT("%p"), Item.Ptr);
+		Result = TMem.Printf("0x%" PRIXPTR "\n", (uintptr_t)Item.Ptr);
 
 	} else if (ColumnID == ColumnID_Size) {
 		int Size = Item.GetSize();
 		if (Size != -1)
-			Result = FString::Printf(TEXT("%d B"), Size);
+			Result = TMem.Printf("%d B", Size);
 	}
 
 	return Result;
 }
 
-FString GetValueStringFromItem(PropertyItem& Item) {
-	SCOPE_EVENT("PropertyWatcher::GetValueStringFromItem");
-
+FAView GetValueStringFromItem(PropertyItem& Item) {
 	// Maybe we could just serialize the property to string?
 	// Since we don't handle that many types for now we can just do it by hand.
-	FString Result;
+	FAView Result;
 
 	if (!Item.Ptr)
 		Result = "Null";
@@ -1093,26 +1178,24 @@ FString GetValueStringFromItem(PropertyItem& Item) {
 		Result = "";
 
 	else if (FNumericProperty* NumericProp = CastField<FNumericProperty>(Item.Prop))
-		Result = NumericProp->GetNumericPropertyValueToString(Item.Ptr);
+		Result = TMem.SToA(NumericProp->GetNumericPropertyValueToString(Item.Ptr));
 
 	else if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Item.Prop))
 		Result = ((bool*)(Item.Ptr)) ? "true" : "false";
 
 	else if (Item.Prop->IsA(FStrProperty::StaticClass()))
-		Result = *(FString*)Item.Ptr;
+		Result = TMem.SToA(*(FString*)Item.Ptr);
 
 	else if (Item.Prop->IsA(FNameProperty::StaticClass()))
-		Result = ((FName*)Item.Ptr)->ToString();
+		Result = TMem.NToA(*((FName*)Item.Ptr));
 
 	else if (Item.Prop->IsA(FTextProperty::StaticClass()))
-		Result = ((FText*)Item.Ptr)->ToString();
+		Result = TMem.SToA((FString&)((FText*)Item.Ptr)->ToString());
 
 	return Result;
 }
 
 void DrawPropertyValue(PropertyItem& Item) {
-	SCOPE_EVENT("PropertyWatcher::DrawPropertyValue");
-
 	static TArray<char> StringBuffer;
 	static int IntStep = 1;
 	static int IntStepFast8 = 10;
@@ -1368,8 +1451,6 @@ void DrawPropertyValue(PropertyItem& Item) {
 }
 
 bool MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items) {
-	SCOPE_EVENT("PropertyWatcher::UpdateItemFromPath");
-
 	// Name is the "path" to the member. You can traverse through objects, structs and arrays.
 	// E.g.: objectMember.<arrayIndex>.structMember.float/int/bool member
 
@@ -1385,7 +1466,7 @@ bool MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items) {
 	{
 		bool Found = false;
 		for (auto& It : Items)
-			if (It.GetAuthoredName() == MemberArray[0]) {
+			if (FString(It.GetAuthoredName()) == MemberArray[0]) { //@Fix
 				CurrentItem = It;
 				Found = true;
 			}
@@ -1416,7 +1497,7 @@ bool MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items) {
 			CurrentItem.GetMembers(&Members);
 			bool Found = false;
 			for (auto MemberItem : Members) {
-				FString ItemName = MemberItem.GetAuthoredName();
+				FString ItemName = FString(MemberItem.GetAuthoredName()); //@Fix
 
 				if (SearchByMemberValue) {
 					//if (ItemName == MemberNameToTest) {
@@ -1444,7 +1525,7 @@ bool MemberPath::UpdateItemFromPath(TArray<PropertyItem>& Items) {
 		CachedItem = {};
 
 	// Have to set this either way, because we want to see the path in the watch window.
-	CachedItem.NameOverwrite = PathString;
+	CachedItem.NameOverwrite = TMem.SToA(PathString);
 
 	return !SearchFailed;
 }
@@ -1473,26 +1554,31 @@ void LoadWatchedMembersFromString(FString Data, TArray<MemberPath>& WatchedMembe
 
 // -------------------------------------------------------------------------------------------
 
-FString PropertyItem::GetName() {
+FName PropertyItem::GetName() {
 	if (Type == PointerType::Property && Prop)
-		return Prop->GetName();
+		return Prop->GetFName();
 
 	if (Type == PointerType::Object && Ptr)
-		return ((UObject*)Ptr)->GetName();
+		return ((UObject*)Ptr)->GetFName();
 
 	if (StructPtr && (Type == PointerType::Struct || Type == PointerType::Function))
-		return StructPtr->GetAuthoredName();
+		return StructPtr->GetFName();
+		//return StructPtr->GetAuthoredName();
 
-	return "";
+	return NAME_None;
 }
 
-FString PropertyItem::GetDisplayName() {
-	FString Result = GetAuthoredName();
-	if (Type == PointerType::Property && CastField<FObjectProperty>(Prop) && Ptr)
-		Result = FString::Printf(TEXT("%s (%s)"), *Result, *((UObject*)Ptr)->GetName());
-
-	return Result;
+FAView PropertyItem::GetAuthoredName() {
+	return !NameOverwrite.IsEmpty() ? NameOverwrite : TMem.NToA(GetName());
 }
+
+//FString PropertyItem::GetDisplayName() {
+//	FString Result = GetAuthoredName();
+//	if (Type == PointerType::Property && CastField<FObjectProperty>(Prop) && Ptr)
+//		Result = FString::Printf(TEXT("%s (%s)"), *Result, *((UObject*)Ptr)->GetName());
+//
+//	return Result;
+//}
 
 bool PropertyItem::IsExpandable() {
 	if (!IsValid())
@@ -1516,14 +1602,13 @@ bool PropertyItem::IsExpandable() {
 	if (Prop->IsA(FStructProperty::StaticClass())) {
 		FStructProperty* StructProp = CastField<FStructProperty>(Prop);
 
-		bool Inlined;
-		{
-			FString Extended;
-			FString StructType = StructProp->GetCPPType(&Extended, 0);
-			// @Todo: These shouldn't be hardcoded.
-			static TArray<FString> Types = { "FVector", "FRotator", "FVector2D", "FIntVector2", "FIntVector", "FTimespan", "FDateTime" };
-			Inlined = Types.Contains(StructType);
-		}
+		// @Todo: These shouldn't be hardcoded.
+		static TSet<FName> TypeSetX = {
+			"Vector", "Rotator", "Vector2D", "IntVector2", "IntVector", "Timespan", "DateTime" 
+		};
+		
+		FName StructType = StructProp->Struct->GetFName();
+		bool Inlined = TypeSetX.Contains(StructType);
 		return !Inlined;
 	}
 
@@ -1536,10 +1621,10 @@ bool PropertyItem::IsExpandable() {
 	return false;
 }
 
-FString PropertyItem::GetPropertyType() {
-	FString Result = "";
+FAView PropertyItem::GetPropertyType() {
+	FAView Result = "";
 	if (Type == PointerType::Property && Prop)
-		Result = Prop->GetClass()->GetName();
+		Result = TMem.NToA(Prop->GetClass()->GetFName());
 
 	else if (Type == PointerType::Object)
 		Result = "";
@@ -1550,12 +1635,17 @@ FString PropertyItem::GetPropertyType() {
 	return Result;
 };
 
-FString PropertyItem::GetCPPType() {
-	if (Type == PointerType::Property && Prop) return Prop->GetCPPType();
-	if (Type == PointerType::Struct)           return ((UScriptStruct*)StructPtr)->GetStructCPPName();
-	if (Type == PointerType::Object) {
+FAView PropertyItem::GetCPPType() {
+	if (Type == PointerType::Property && Prop) 
+		return TMem.SToA(Prop->GetCPPType());
+
+	if (Type == PointerType::Struct)           
+		return TMem.SToA(((UScriptStruct*)StructPtr)->GetStructCPPName());
+
+	if (Type == PointerType::Object && Ptr) {
 		UClass* Class = ((UObject*)Ptr)->GetClass();
-		if (Class) return Class->GetName();
+		if (Class) 
+			return TMem.NToA(Class->GetFName());
 	}
 
 	// Do we really have to do this? Is there no engine function?
@@ -1565,34 +1655,38 @@ FString PropertyItem::GetCPPType() {
 		FProperty* ReturnProp = Function->GetReturnProperty();
 		FString ts = ReturnProp ? ReturnProp->GetCPPType() : "void";
 
-		ts += " (";
+		ts += TEXT(" (");
 		int i = 0;
 		for (FProperty* MemberProp : TFieldRange<FProperty>(Function)) {
 			if (MemberProp == ReturnProp) continue;
-			if (i == 1) ts += ", ";
+			if (i == 1) ts += TEXT(", ");
 			ts += MemberProp->GetCPPType();
 			i++;
 		}
-		ts += ")";
+		ts += TEXT(")");
 
-		return ts;
+		return TMem.SToA(ts);
 	}
 
 	return "";
 };
 
 int PropertyItem::GetSize() {
-	if (Prop) return Prop->GetSize();
+	if (Prop) 
+		return Prop->GetSize();
+
 	else if (Type == PointerType::Object) {
 		UClass* Class = ((UObject*)Ptr)->GetClass();
-		if (!Class) return Class->GetPropertiesSize();
-	} else if (Type == PointerType::Struct) return StructPtr->GetPropertiesSize();
+		if (Class) 
+			return Class->GetPropertiesSize();
+
+	} else if (Type == PointerType::Struct) 
+		return StructPtr->GetPropertiesSize();
+
 	return -1;
 };
 
 int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
-	SCOPE_EVENT("PropertyWatcher::GetMembers");
-
 	if (!Ptr) return 0;
 
 	int Count = 0;
@@ -1653,8 +1747,8 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 
 			auto KeyItem = MakeArrayItem(KeyPtr, KeyProp, i);
 			auto ValueItem = MakeArrayItem(ValuePtr2, ValueProp, i);
-			KeyItem.NameOverwrite.Append(" Key");
-			ValueItem.NameOverwrite.Append(" Value");
+			TMem.Append(&KeyItem.NameOverwrite, " Key");
+			TMem.Append(&ValueItem.NameOverwrite, " Value");
 			MemberArray->Push(KeyItem);
 			MemberArray->Push(ValueItem);
 		}
@@ -1698,6 +1792,14 @@ int PropertyItem::GetMembers(TArray<PropertyItem>* MemberArray) {
 	return Count;
 }
 
+int PropertyItem::GetMemberCount() {
+	if (CachedMemberCount != -1)
+		return CachedMemberCount;
+
+	CachedMemberCount = GetMembers(0);
+	return CachedMemberCount;
+}
+
 void* ContainerToValuePointer(PointerType Type, void* ContainerPtr, FProperty* MemberProp) {
 	switch (Type) {
 	case Object: {
@@ -1726,16 +1828,23 @@ void* ContainerToValuePointer(PointerType Type, void* ContainerPtr, FProperty* M
 PropertyItem MakeObjectItem(void* _Ptr) {
 	return { PointerType::Object, _Ptr };
 }
-PropertyItem MakeObjectItemNamed(void* _Ptr, FString _NameOverwrite, FString NameID) {
+PropertyItem MakeObjectItemNamed(void* _Ptr, const char* _NameOverwrite, FAView NameID) {
+	return MakeObjectItemNamed(_Ptr, FAView(_NameOverwrite));
+}
+PropertyItem MakeObjectItemNamed(void* _Ptr, FString _NameOverwrite, FAView NameID) {
+	TMem.Init(TMemoryStartSize);
+	return MakeObjectItemNamed(_Ptr, TMem.SToA(_NameOverwrite));
+}
+PropertyItem MakeObjectItemNamed(void* _Ptr, FAView _NameOverwrite, FAView NameID) {
 	return { PointerType::Object, _Ptr, 0, _NameOverwrite, 0, NameID };
 }
 PropertyItem MakeArrayItem(void* _Ptr, FProperty* _Prop, int _Index, bool IsObjectProp) {
-	return { PointerType::Property, _Ptr, _Prop, FString::Printf(TEXT("[%d]"), _Index) };
+	return { PointerType::Property, _Ptr, _Prop, TMem.Printf("[%d]", _Index) };
 }
 PropertyItem MakePropertyItem(void* _Ptr, FProperty* _Prop) {
 	return { PointerType::Property, _Ptr, _Prop };
 }
-PropertyItem MakePropertyItemNamed(void* _Ptr, FProperty* _Prop, FString Name, FString NameID) {
+PropertyItem MakePropertyItemNamed(void* _Ptr, FProperty* _Prop, FAView Name, FAView NameID) {
 	return { PointerType::Property, _Ptr, _Prop, Name, 0, NameID };
 }
 PropertyItem MakeFunctionItem(void* _Ptr, UFunction* _Function) {
@@ -1748,10 +1857,20 @@ void SetTableRowBackgroundByStackIndex(int StackIndex) {
 	if (StackIndex == 0)
 		return;
 
-	ImVec4 c = { 0, 0, 0, 0.05f };
-	float h = ((StackIndex - 1) % 4) / 4.0f + 0.065; // Start with orange, cycle 4 colors.
-	ImGui::ColorConvertHSVtoRGB(h, 1.0f, 1.0f, c.x, c.y, c.z);
-	ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(c));
+	// Cache colors.
+	static ImU32 Colors[4] = {};
+	static bool Init = true;
+	if (Init) {
+		Init = false;
+		ImVec4 c = { 0, 0, 0, 0.05f };
+		for (int i = 0; i < 4; i++) {
+			float h = (i / 4.0f) + 0.065; // Start with orange, cycle 4 colors.
+			ImGui::ColorConvertHSVtoRGB(h, 1.0f, 1.0f, c.x, c.y, c.z);
+			Colors[i] = ImGui::GetColorU32(c);
+		}
+	}
+
+	ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, Colors[(StackIndex-1)%4]);
 }
 
 int GetDigitKeyDownAsInt() {
@@ -1763,114 +1882,118 @@ int GetDigitKeyDownAsInt() {
 	return 0;
 }
 
-bool BeginTreeNode(FString NameID, FString DisplayName, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags) {
-	SCOPE_EVENT("PropertyWatcher::BeginTreeNode");
+bool BeginTreeNode(const char* NameID, const char* DisplayName, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags) {
+	bool IsNameNodeVisible = State.IsCurrentItemVisible();
+	bool ItemIsInlined = false;
 
-	bool ItemIsInlined = State.ForceInlineChildItems && (StackIndex < State.InlineStackIndexLimit) && NodeState.HasBranches;
+	if (NodeState.HasBranches) {
+		ItemIsInlined = State.ForceInlineChildItems && (StackIndex <= State.InlineStackIndexLimit);
 
-	if (State.ForceInlineChildItems && State.VisitedPropertiesStack.ContainsByPredicate([&NodeState](auto It) { return It.Compare(NodeState.ItemInfo); }))
-		ItemIsInlined = false;
+		if (State.ForceInlineChildItems && State.ItemIsInfiniteLooping(NodeState.ItemInfo))
+			ItemIsInlined = false;
+	}
 
 	if (ItemIsInlined) {
 		NodeState.IsOpen = true;
-		ImGui::TreePush(ImGui_StoA(*NameID));
+		ImGui::TreePush(NameID);
 		ImGui::Unindent();
 		NodeState.ItemIsInlined = true;
 
 	} else {
 		// Start new row. Column index before this should be LastColumnIndex + 1.
 		ImGui::TableNextColumn();
-		ImGui::AlignTextToFramePadding();
 
-		SetTableRowBackgroundByStackIndex(NodeState.VisualStackIndex != -1 ? NodeState.VisualStackIndex : StackIndex);
-
-		if (NodeState.PushTextColor)
+		if (IsNameNodeVisible) {
+			ImGui::AlignTextToFramePadding();
+			SetTableRowBackgroundByStackIndex(NodeState.VisualStackIndex != -1 ? NodeState.VisualStackIndex : StackIndex);
+		}
+		bool PushTextColor = IsNameNodeVisible && NodeState.PushTextColor;
+		if (PushTextColor)
 			ImGui::PushStyleColor(ImGuiCol_Text, NodeState.TextColor);
-		defer{
-			if (NodeState.PushTextColor)
-				ImGui::PopStyleColor(1);
-		};
 
 		bool NodeStateChanged = false;
 
-		// If force open mode is active we change the state of the node if needed.
-		if (State.ForceToggleNodeOpenClose && NodeState.HasBranches) {
-			auto StateStorage = ImGui::GetStateStorage();
-			auto ID = ImGui::GetID(ImGui_StoA(*NameID));
-			bool IsOpen = (bool)StateStorage->GetInt(ID);
+		if (NodeState.HasBranches) {
+			// If force open mode is active we change the state of the node if needed.
+			if (State.ForceToggleNodeOpenClose) {
+				auto StateStorage = ImGui::GetStateStorage();
+				auto ID = ImGui::GetID(NameID);
+				bool IsOpen = (bool)StateStorage->GetInt(ID);
 
-			// Tree node state should change.
-			if (State.ForceToggleNodeMode != IsOpen) {
-				bool StateChangeAllowed = true;
+				// Tree node state should change.
+				if (State.ForceToggleNodeMode != IsOpen) {
+					bool StateChangeAllowed = true;
 
-				// Checks when trying to toggle open node.
-				if (State.ForceToggleNodeMode) {
-					// Address already visited.
-					if (NodeState.ItemInfo.Address && State.VisitedPropertiesStack.ContainsByPredicate([&NodeState](auto It) { return It.Compare(NodeState.ItemInfo); }))
-						StateChangeAllowed = false;
+					// Checks when trying to toggle open node.
+					if (State.ForceToggleNodeMode) {
+						// Address already visited.
+						if (State.ItemIsInfiniteLooping(NodeState.ItemInfo))
+							StateChangeAllowed = false;
 
-					// Stack depth limit reached.
-					if (StackIndex > State.ForceToggleNodeStackIndexLimit)
-						StateChangeAllowed = false;
-				}
+						// Stack depth limit reached.
+						if (StackIndex > State.ForceToggleNodeStackIndexLimit)
+							StateChangeAllowed = false;
+					}
 
-				if (StateChangeAllowed) {
-					ImGui::SetNextItemOpen(State.ForceToggleNodeMode);
-					NodeStateChanged = true;
+					if (StateChangeAllowed) {
+						ImGui::SetNextItemOpen(State.ForceToggleNodeMode);
+						NodeStateChanged = true;
+					}
 				}
 			}
-		}
 
-		int Flags = ExtraFlags;
-		{
-			Flags |= NodeState.HasBranches ? ImGuiTreeNodeFlags_NavLeftJumpsBackHere : ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+			int Flags = ExtraFlags | ImGuiTreeNodeFlags_NavLeftJumpsBackHere;
 			if (NodeState.OverrideNoTreePush)
 				Flags |= ImGuiTreeNodeFlags_NoTreePushOnOpen;
-			
-			SCOPE_EVENT("PropertyWatcher::TreeNodeEx");
 
-			bool Open = ImGui::TreeNodeEx(ImGui_StoA(*NameID), Flags, ImGui_StoA(*DisplayName));
-			if (NodeState.HasBranches)
-				NodeState.IsOpen = Open;
+			const char* DisplayText = IsNameNodeVisible ? DisplayName : "";
+			NodeState.IsOpen = ImGui::TreeNodeEx(NameID, Flags, DisplayText);
+
+			{
+				NodeState.ActivatedForceToggleNodeOpenClose = false;
+
+				// Start force toggle mode.
+				if (ImGui::IsItemToggledOpen() && ImGui::IsKeyDown(ImGuiMod_Shift) && !State.ForceToggleNodeOpenClose) {
+					NodeState.ActivatedForceToggleNodeOpenClose = true;
+					int StackLimitOffset = GetDigitKeyDownAsInt();
+					State.EnableForceToggleNode(NodeState.IsOpen, StackIndex + (StackLimitOffset == 0 ? 10 : StackLimitOffset));
+				}
+
+				// If we forced this node closed we have to draw it's children for one frame so they can be forced closed as well.
+				// The goal is to close everything that's visually open.
+				if (State.IsForceToggleNodeActive(StackIndex) && (NodeState.ActivatedForceToggleNodeOpenClose || NodeStateChanged) && !NodeState.IsOpen) {
+					if (!(Flags & ImGuiTreeNodeFlags_NoTreePushOnOpen))
+						ImGui::TreePush(NameID);
+
+					NodeState.IsOpen = true;
+				}
+			}
+
+		} else {
+			const char* DisplayText = IsNameNodeVisible ? DisplayName : "";
+			ImGui::TreeNodeEx(DisplayText, ExtraFlags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
 		}
 
-		NodeState.ActivatedForceToggleNodeOpenClose = false;
-
-		// Start force toggle mode.
-		if (ImGui::IsItemToggledOpen() && ImGui::IsKeyDown(ImGuiMod_Shift) && !State.ForceToggleNodeOpenClose) {
-			NodeState.ActivatedForceToggleNodeOpenClose = true;
-			int StackLimitOffset = GetDigitKeyDownAsInt();
-			State.EnableForceToggleNode(NodeState.IsOpen, StackIndex + (StackLimitOffset == 0 ? 10 : StackLimitOffset));
-		}
-
-		// If we forced this node closed we have to draw it's children for one frame so they can be forced closed as well.
-		// The goal is to close everything that's visually open.
-		if (State.IsForceToggleNodeActive(StackIndex) && (NodeState.ActivatedForceToggleNodeOpenClose || NodeStateChanged) && !NodeState.IsOpen) {
-			if (!(Flags & ImGuiTreeNodeFlags_NoTreePushOnOpen))
-				ImGui::TreePush(ImGui_StoA(*NameID));
-
-			NodeState.IsOpen = true;
-		}
+		if (PushTextColor)
+			ImGui::PopStyleColor(1);
 	}
 
 	return NodeState.IsOpen;
 }
 
-void TreeNodeSetInline(TreeNodeState& NodeState, TreeState& State, int CurrentMemberPathLength, int StackIndex, bool Inline, int InlineStackDepth) {
-	if (Inline && !State.ForceInlineChildItems) {
-		NodeState.InlineChildren = true;
+void TreeNodeSetInline(TreeNodeState& NodeState, TreeState& State, int CurrentMemberPathLength, int StackIndex, int InlineStackDepth) {
+	NodeState.InlineChildren = true;
 
-		State.ForceInlineChildItems = true;
-		State.InlineStackIndexLimit = InlineStackDepth == 0 ? StackIndex + 100 : StackIndex + InlineStackDepth;
+	State.ForceInlineChildItems = true;
+	// @Note: Should we enable inifinite inlining again in the future?
+	//State.InlineStackIndexLimit = InlineStackDepth == 0 ? StackIndex + 100 : StackIndex + InlineStackDepth;
+	State.InlineStackIndexLimit = StackIndex + InlineStackDepth;
 
-		State.InlineMemberPathIndexOffset = CurrentMemberPathLength;
-		State.VisitedPropertiesStack.Empty();
-	}
+	State.InlineMemberPathIndexOffset = CurrentMemberPathLength;
+	State.VisitedPropertiesStack.Empty();
 }
 
 void EndTreeNode(TreeNodeState& NodeState, TreeState& State) {
-	SCOPE_EVENT("PropertyWatcher::EndTreeNode");
-
 	if (NodeState.ItemIsInlined) {
 		ImGui::TreePop();
 		ImGui::Indent();
@@ -1885,31 +2008,34 @@ void EndTreeNode(TreeNodeState& NodeState, TreeState& State) {
 		State.ForceInlineChildItems = false;
 }
 
-bool BeginSection(FString Name, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags) {
-	SCOPE_EVENT("PropertyWatcher::BeginSection");
-
+bool BeginSection(FAView Name, TreeNodeState& NodeState, TreeState& State, int StackIndex, int ExtraFlags) {
 	bool NodeOpenCloseLogicIsEnabled = true;
 
+	bool ItemIsVisible = State.IsCurrentItemVisible();
+
 	NodeState.HasBranches = true;
-	NodeState.PushTextColor = true;
-	NodeState.TextColor = ImVec4(1, 1, 1, 0.5f);
-	NodeState.VisualStackIndex = StackIndex + 1;
 
-	ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(1, 1, 1, 0)); defer{ ImGui::PopStyleColor(1); };
+	if (ItemIsVisible) {
+		NodeState.PushTextColor = true;
+		NodeState.TextColor = ImVec4(1, 1, 1, 0.5f);
+		NodeState.VisualStackIndex = StackIndex + 1;
 
-	const char* CharName = ImGui_StoA(*("(" + Name + ")"));
+		ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(1, 1, 1, 0));
+	}
+
 	ExtraFlags |= ImGuiTreeNodeFlags_Framed;
-	bool IsOpen = BeginTreeNode(CharName, CharName, NodeState, State, StackIndex, ExtraFlags);
+	bool IsOpen = BeginTreeNode(*Name, ItemIsVisible ? *TMem.Printf("(%s)", *Name) : "", NodeState, State, StackIndex, ExtraFlags);
 
 	// Nothing else is drawn in the row so we skip to the next one.
 	ImGui::TableSetColumnIndex(ImGui::TableGetColumnCount() - 1);
+
+	if(ItemIsVisible)
+		ImGui::PopStyleColor(1);
 
 	return IsOpen;
 }
 
 void EndSection(TreeNodeState& NodeState, TreeState& State) {
-	SCOPE_EVENT("PropertyWatcher::EndSection");
-
 	EndTreeNode(NodeState, State);
 }
 
@@ -1961,13 +2087,13 @@ TArray<UFunction*> GetObjectFunctionList(UObject* Obj) {
 	return Functions;
 }
 
-FString GetItemMetadataCategory(PropertyItem& Item) {
-	FString Category = "";
+FAView GetItemMetadataCategory(PropertyItem& Item) {
+	FAView Category = "";
 #if WITH_EDITORONLY_DATA											
 	if (Item.Prop) {
 		if (const TMap<FName, FString>* MetaData = Item.Prop->GetMetaDataMap()) {
 			if (const FString* Value = MetaData->Find("Category"))
-				Category = *Value;
+				Category = TMem.SToA(*((FString*)Value));
 		}
 	}
 #endif
@@ -2070,9 +2196,7 @@ bool GetObjFromObjPointerProp(PropertyItem& Item, UObject*& Object) {
 
 // -------------------------------------------------------------------------------------------
 
-void SimpleSearchParser::ParseExpression(FString str, TArray<FString> _Columns) {
-	SCOPE_EVENT("PropertyWatcher::ParseExpression");
-
+void SimpleSearchParser::ParseExpression(FAView str, TArray<FAView> _Columns) {
 	Commands.Empty();
 
 	struct StackInfo {
@@ -2081,9 +2205,9 @@ void SimpleSearchParser::ParseExpression(FString str, TArray<FString> _Columns) 
 	};
 	TArray<StackInfo> Stack = { {} };
 
-	auto EatToken = [&str](FString Token) -> bool {
+	auto EatToken = [&str](FAView Token) -> bool {
 		if (str.StartsWith(Token)) {
-			str.RemoveAt(0, Token.Len());
+			str.RemovePrefix(Token.Len());
 			return true;
 		}
 		return false;
@@ -2105,17 +2229,16 @@ void SimpleSearchParser::ParseExpression(FString str, TArray<FString> _Columns) 
 		str.TrimStartInline();
 		if (str.IsEmpty()) break;
 
-		if      (EatToken("|"))   Stack.Last().OPs.Push(OP_Or);
-		else if (EatToken("!"))   Stack.Last().OPs.Push(OP_Not);
-		else if (EatToken("+"))   Stack.Last().Tests.Last().Mod = Mod_Exact;
-		else if (EatToken("r:"))  Stack.Last().Tests.Last().Mod = Mod_Regex;
-		else if (EatToken("<="))  Stack.Last().Tests.Last().Mod = Mod_LessEqual;
-		else if (EatToken(">="))  Stack.Last().Tests.Last().Mod = Mod_GreaterEqual;
-		else if (EatToken("<"))   Stack.Last().Tests.Last().Mod = Mod_Less;
-		else if (EatToken(">"))   Stack.Last().Tests.Last().Mod = Mod_Greater;
-		else if (EatToken("="))   Stack.Last().Tests.Last().Mod = Mod_Equal;
-		else if (EatToken("("))   Stack.Push({});
-
+		if      (EatToken("|"))  Stack.Last().OPs.Push(OP_Or);
+		else if (EatToken("!"))  Stack.Last().OPs.Push(OP_Not);
+		else if (EatToken("+"))  Stack.Last().Tests.Last().Mod = Mod_Exact;
+		else if (EatToken("r:")) Stack.Last().Tests.Last().Mod = Mod_Regex;
+		else if (EatToken("<=")) Stack.Last().Tests.Last().Mod = Mod_LessEqual;
+		else if (EatToken(">=")) Stack.Last().Tests.Last().Mod = Mod_GreaterEqual;
+		else if (EatToken("<"))  Stack.Last().Tests.Last().Mod = Mod_Less;
+		else if (EatToken(">"))  Stack.Last().Tests.Last().Mod = Mod_Greater;
+		else if (EatToken("="))  Stack.Last().Tests.Last().Mod = Mod_Equal;
+		else if (EatToken("("))  Stack.Push({});
 		else if (EatToken(")")) {
 			Stack.Pop();
 			if (!Stack.Num()) break;
@@ -2126,11 +2249,14 @@ void SimpleSearchParser::ParseExpression(FString str, TArray<FString> _Columns) 
 			{
 				bool Found = false;
 				for (int i = 0; i < _Columns.Num(); i++) {
-					if (str.StartsWith(_Columns[i] + ':')) {
-						Stack.Last().Tests.Last().Column = FName(_Columns[i]);
-						str.RemoveAt(0, _Columns[i].Len());
-						Found = true;
-						break;
+					auto Col = _Columns[i];
+					if (str.StartsWith(Col, ESearchCase::IgnoreCase)) {
+						if (str.RightChop(Col.Len()).StartsWith(':')) {
+							Stack.Last().Tests.Last().ColumnID = i; // ColumnID should always be the index for this to work.
+							str.RemovePrefix(Col.Len() + 1);
+							Found = true;
+							break;
+						}
 					}
 				}
 				if (Found) continue;
@@ -2140,7 +2266,7 @@ void SimpleSearchParser::ParseExpression(FString str, TArray<FString> _Columns) 
 				int Index;
 				if (str.FindChar('"', Index)) {
 					Stack.Last().Tests.Last().Ident = str.Left(Index);
-					str.RemoveAt(0, Index + 1);
+					str.RemovePrefix(Index + 1);
 
 					Commands.Push({ Command_Test, Stack.Last().Tests.Last() });
 					PushedWord();
@@ -2157,46 +2283,41 @@ void SimpleSearchParser::ParseExpression(FString str, TArray<FString> _Columns) 
 
 				// For now we skip chars we don't know.
 				if (!Index) {
-					str.RemoveAt(0);
+					str.RemovePrefix(1);
 					continue;
 				}
 
 				Stack.Last().Tests.Last().Ident = str.Left(Index);
-				str.RemoveAt(0, Index);
+				str.RemovePrefix(Index);
 
 				Commands.Push({ Command_Test, Stack.Last().Tests.Last() });
 				PushedWord();
 			}
 		}
 	}
-
-	for (auto& It : Commands)
-		if (It.Type == Command_Test && It.Tst.Column == NAME_None)
-			It.Tst.Column = "name";
 }
 
-bool SimpleSearchParser::ApplyTests(TMap<int, FString>& ColumnTexts) {
-	SCOPE_EVENT("PropertyWatcher::ApplyTests");
-
+bool SimpleSearchParser::ApplyTests(CachedColumnText& ColumnTexts) {
 	TArray<bool> Bools;
 	for (auto Command : Commands) {
 		if (Command.Type == Command_Test) {
 			Test& Tst = Command.Tst;
-			FString* ColStr = ColumnTexts.Find(Tst.ColumnID);
-			if (!ColStr)
+			FAView* FoundString = ColumnTexts.Get(Tst.ColumnID);
+			if (!FoundString)
 				continue;
+			FAView ColStr = *FoundString;
 
 			bool Result;
-			if     (!Tst.Mod)                     Result = ColStr->Contains(Tst.Ident);
-			else if (Tst.Mod == Mod_Exact)        Result = ColStr->Equals(Tst.Ident, ESearchCase::IgnoreCase);
-			else if (Tst.Mod == Mod_Equal)        Result = FCString::Atod(**ColStr) == FCString::Atod(*Tst.Ident);
-			else if (Tst.Mod == Mod_Greater)      Result = FCString::Atod(**ColStr) > FCString::Atod(*Tst.Ident);
-			else if (Tst.Mod == Mod_Less)         Result = FCString::Atod(**ColStr) < FCString::Atod(*Tst.Ident);
-			else if (Tst.Mod == Mod_GreaterEqual) Result = FCString::Atod(**ColStr) >= FCString::Atod(*Tst.Ident);
-			else if (Tst.Mod == Mod_LessEqual)    Result = FCString::Atod(**ColStr) <= FCString::Atod(*Tst.Ident);
+			if     (!Tst.Mod)                     Result = StringView_Contains<ANSICHAR>(ColStr, Tst.Ident);
+			else if (Tst.Mod == Mod_Exact)        Result = ColStr.Equals(Tst.Ident, ESearchCase::IgnoreCase);
+			else if (Tst.Mod == Mod_Equal)        Result = ColStr.Len() ? FCStringAnsi::Atod(*ColStr) == FCStringAnsi::Atod(*Tst.Ident) : false;
+			else if (Tst.Mod == Mod_Greater)      Result = ColStr.Len() ? FCStringAnsi::Atod(*ColStr) >  FCStringAnsi::Atod(*Tst.Ident) : false;
+			else if (Tst.Mod == Mod_Less)         Result = ColStr.Len() ? FCStringAnsi::Atod(*ColStr) <  FCStringAnsi::Atod(*Tst.Ident) : false;
+			else if (Tst.Mod == Mod_GreaterEqual) Result = ColStr.Len() ? FCStringAnsi::Atod(*ColStr) >= FCStringAnsi::Atod(*Tst.Ident) : false;
+			else if (Tst.Mod == Mod_LessEqual)    Result = ColStr.Len() ? FCStringAnsi::Atod(*ColStr) <= FCStringAnsi::Atod(*Tst.Ident) : false;
 
 			else if (Tst.Mod == Mod_Regex) {
-				FRegexMatcher RegMatcher(FRegexPattern(Tst.Ident), *ColStr);
+				FRegexMatcher RegMatcher(FRegexPattern(*Tst.Ident), *ColStr);
 				Result = RegMatcher.FindNext();
 			}
 			Bools.Push(Result);
@@ -2223,6 +2344,30 @@ bool SimpleSearchParser::ApplyTests(TMap<int, FString>& ColumnTexts) {
 		return Bools[0];
 	else
 		return false;
+}
+
+FAView SimpleSearchParser::Command::ToString() {
+	if (Type == Command_Test) {
+		FAView s = TMem.Printf("%d: %s", Tst.ColumnID, *Tst.Ident);
+		if (Tst.Mod) {
+			if      (Tst.Mod == Mod_Exact)        TMem.Append(&s, "[Exact]");
+			else if (Tst.Mod == Mod_Regex)        TMem.Append(&s, "[Regex]");
+			else if (Tst.Mod == Mod_Equal)        TMem.Append(&s, "[Equal]");
+			else if (Tst.Mod == Mod_Greater)      TMem.Append(&s, "[Greater]");
+			else if (Tst.Mod == Mod_Less)         TMem.Append(&s, "[Less]");
+			else if (Tst.Mod == Mod_GreaterEqual) TMem.Append(&s, "[GreaterEqual]");
+			else if (Tst.Mod == Mod_LessEqual)    TMem.Append(&s, "[LessEqual]");
+		}
+		return s;
+
+	} else if (Type == Command_Op) {
+		if      (Op == OP_And) return "AND";
+		else if (Op == OP_Or)  return "OR";
+		else if (Op == OP_Not) return "NOT";
+
+	} else if (Type == Command_Store) return "STORE";
+
+	return "";
 }
 
 // -------------------------------------------------------------------------------------------
@@ -2333,6 +2478,142 @@ const char* HelpText =
 	"\n"
 	"Right click on an item to inline it.\n"
 	;
+
+// -------------------------------------------------------------------------------------------
+
+char* TempMemoryPool::MemBucket::Get(int Count) {
+	char* Result = Data + Position;
+	Position += Count;
+	return Result;
 }
 
+void TempMemoryPool::Init(int _StartSize) {
+	if (!IsInitialized) {
+		*this = {};
+		IsInitialized = true;
+		StartSize = StartSize;
+	}
+
+	if (Buckets.IsEmpty())
+		AddBucket();
+}
+
+void TempMemoryPool::AddBucket() {
+	int BucketSize = Buckets.Num() == 0 ? StartSize : Buckets.Last().Size * 2; // Double every bucket.
+	MemBucket Bucket = {};
+	Bucket.Data = (char*)FMemory::Malloc(BucketSize);
+	Bucket.Size = BucketSize;
+	Buckets.Add(Bucket);
+}
+
+void TempMemoryPool::ClearAll() {
+	for (auto& It : Buckets)
+		FMemory::Free(It.Data);
+	Buckets.Empty();
+	CurrentBucketIndex = 0;
+
+	Markers.Empty();
+}
+
+void TempMemoryPool::GoToNextBucket() {
+	if (!Buckets.IsValidIndex(CurrentBucketIndex + 1))
+		AddBucket();
+	CurrentBucketIndex++;
+}
+
+char* TempMemoryPool::Get(int Count) {
+	while (!GetCurrentBucket().MemoryFits(Count))
+		GoToNextBucket();
+
+	return GetCurrentBucket().Get(Count);
+}
+
+void TempMemoryPool::Free(int Count) {
+	int BytesToFree = Count;
+	while (true) {
+		auto Bucket = GetCurrentBucket();
+		int BucketBytesToFree = FMath::Min(Bucket.Position, BytesToFree);
+		Bucket.Free(BucketBytesToFree);
+		BytesToFree -= BucketBytesToFree;
+		if (BytesToFree)
+			break;
+		GoToPrevBucket();
+	}
+}
+
+void TempMemoryPool::PushMarker() {
+	Markers.Add({ CurrentBucketIndex, Buckets[CurrentBucketIndex].Position });
+}
+
+void TempMemoryPool::FreeToMarker() {
+	auto& Marker = Markers.Last();
+	while (CurrentBucketIndex != Marker.BucketIndex) {
+		GetCurrentBucket().Position = 0;
+		GoToPrevBucket();
+	}
+	GetCurrentBucket().Position = Marker.DataPosition;
+}
+
+void TempMemoryPool::PopMarker(bool Free) {
+	if (Free)
+		FreeToMarker();
+	Markers.Pop(false);
+}
+
+// Copied from FString::Printf().
+FAView TempMemoryPool::Printf(const char* Fmt, ...) {
+	int BufferSize = 128;
+	ANSICHAR* Buffer = 0;
+
+	int ResultSize;
+	while (true) {
+		int Count = BufferSize * sizeof(ANSICHAR);
+		Buffer = (ANSICHAR*)Get(Count);
+		GET_VARARGS_RESULT_ANSI(Buffer, BufferSize, BufferSize - 1, Fmt, Fmt, ResultSize);
+
+		if (ResultSize != -1)
+			break;
+
+		Free(Count);
+		BufferSize *= 2;
+	};
+
+	Buffer[ResultSize] = '\0';
+
+	FAView View(Buffer, ResultSize);
+	return View;
+}
+
+// Copied partially from StringCast.
+FAView TempMemoryPool::CToA(const TCHAR* SrcBuffer, int SrcLen) {
+	int StringLength = TStringConvert<TCHAR, ANSICHAR>::ConvertedLength(SrcBuffer, SrcLen);
+	int32 BufferSize = StringLength;
+	ANSICHAR* Buffer = (ANSICHAR*)Get(BufferSize + 1);
+	TStringConvert<TCHAR, ANSICHAR>::Convert(Buffer, BufferSize, SrcBuffer, SrcLen);
+	Buffer[BufferSize] = '\0';
+
+	FAView View(Buffer, BufferSize);
+	return View;
+}
+
+// I wish there was a way to get the FName data ansi pointer directly instead of having to copy it.
+FAView TempMemoryPool::NToA(FName Name) {
+	const FNameEntry* NameEntry = Name.GetDisplayNameEntry();
+	if (NameEntry->IsWide())
+		return "<WideFNameError>";
+
+	int Len = NameEntry->GetNameLength();
+	ANSICHAR* Buffer = Get(Len + 1);
+	NameEntry->GetAnsiName((ANSICHAR(&)[NAME_SIZE])(*Buffer));
+
+	FAView View(Buffer, Len);
+	return View;
+}
+
+} // namespace PropertyWatcher
+
 #endif // UE_SERVER
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
