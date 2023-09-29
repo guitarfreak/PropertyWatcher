@@ -97,6 +97,13 @@
 		- Add filter mode that hides everything.
 */
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat"
+#endif
+
+#if !UE_SERVER
+
 #define PROPERTY_WATCHER_INTERNAL
 #include "PropertyWatcher.h"
 
@@ -117,13 +124,6 @@
 
 #include "Misc/TextFilterUtils.h"
 #include <inttypes.h> // For printing address.
-
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat"
-#endif
-
-#if !UE_SERVER
 
 // Switch on to turn on unreal insights events for performance tests.
 #define SCOPE_EVENT(name) 
@@ -2491,7 +2491,7 @@ void TempMemoryPool::Init(int _StartSize) {
 	if (!IsInitialized) {
 		*this = {};
 		IsInitialized = true;
-		StartSize = StartSize;
+		StartSize = _StartSize;
 	}
 
 	if (Buckets.IsEmpty())
